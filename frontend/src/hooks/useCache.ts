@@ -153,8 +153,11 @@ export function useCache<T = any>(
     try {
       setError(null);
       const res = await api.get(currentUrl, {
-        // Bypass any old request interceptor cache
-        headers: { 'x-no-cache': '1' }
+        headers: { 
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        },
+        params: { _t: Date.now() }
       });
       
       // Only update if the URL hasn't changed while we were fetching
