@@ -102,6 +102,11 @@ export function invalidateCache(pattern: string): void {
     }
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
+
+  // Broadcast invalidation event to all active mounted hooks
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tl_cache_invalidated', { detail: { pattern } }));
+  }
 }
 
 /** Invalidate ALL cache */
@@ -113,6 +118,10 @@ export function invalidateAllCache(): void {
     if (key?.startsWith(CACHE_PREFIX)) keysToRemove.push(key);
   }
   keysToRemove.forEach(k => localStorage.removeItem(k));
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tl_cache_invalidated', { detail: { pattern: '' } }));
+  }
 }
 
 /**
@@ -191,6 +200,22 @@ export function useCache<T = any>(
       fetchData();
     }
   }, [url, skip, ttl, noStale, fetchData]);
+
+  // Listen for targeted cache invalidation events (e.g. new bookmark or added course)
+  useEffect(() => {
+    if (!url || skip) return;
+    
+    const handleInvalidation = (e: Event) => {
+      const customEvent = e as CustomEvent<{ pattern: string }>;
+      const pattern = customEvent?.detail?.pattern;
+      if (!pattern || url.includes(pattern)) {
+        fetchData();
+      }
+    };
+
+    window.addEventListener('tl_cache_invalidated', handleInvalidation);
+    return () => window.removeEventListener('tl_cache_invalidated', handleInvalidation);
+  }, [url, skip, fetchData]);
 
   const refresh = useCallback(async () => {
     if (url) {
