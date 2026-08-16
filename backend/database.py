@@ -59,6 +59,7 @@ class Bookmark(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     lesson_id = Column(Integer, nullable=False)
+    course_id = Column(String, nullable=True, index=True)
     title = Column(String, nullable=True)
 
 async def init_db():

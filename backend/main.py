@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import auth, courses, progress
+from routes import auth, courses, progress, dashboard
 from database import init_db, engine
 
 app = FastAPI(title="TeleLearn API")
@@ -25,6 +25,7 @@ async def shutdown_db_client():
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(courses.router, prefix="/api/courses", tags=["courses"])
 app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 
 @app.get("/")
 def root():

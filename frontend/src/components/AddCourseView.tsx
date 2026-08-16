@@ -1,101 +1,156 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { PlusCircle, Search, Layers } from 'lucide-react';
+import useCache, { invalidateCache } from '../hooks/useCache';
+import { PlusCircle, Search, Layers, ChevronRight, CheckCircle, ArrowLeft } from 'lucide-react';
 
 export default function AddCourseView() {
-  const [channels, setChannels] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
-  
-  const phone = localStorage.getItem('phone');
+  const phone = localStorage.getItem('phone') || '';
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchChannels();
-  }, []);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [syncingId, setSyncingId] = useState<number | null>(null);
+  const [syncedIds, setSyncedIds] = useState<number[]>([]);
 
-  const fetchChannels = async () => {
-    try {
-      const res = await api.get(`/courses/channels?phone=${encodeURIComponent(phone || '')}`);
-      setChannels(res.data.channels);
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const { data: channelsData, isLoading } = useCache<{ channels: any[] }>(
+    phone ? `/courses/channels?phone=${encodeURIComponent(phone)}` : null,
+    { ttl: 5 * 60 * 1000 }
+  );
+
+  const channels = channelsData?.channels || [];
 
   const handleSync = async (channelId: number) => {
     setSyncingId(channelId);
-    setLoading(true);
     try {
       await api.post('/courses/sync', { phone, channel_id: channelId });
-      localStorage.removeItem('api_cache_/courses/');
-      navigate('/dashboard');
+      invalidateCache('/dashboard');
+      invalidateCache('/courses');
+      setSyncedIds((prev) => [...prev, channelId]);
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 700);
     } catch (err) {
-      console.error(err);
+      console.error('Failed to sync channel:', err);
     } finally {
-      setLoading(false);
       setSyncingId(null);
     }
   };
 
+  const filteredChannels = channels.filter((c: any) => 
+    (c.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-8 pb-24 h-full flex flex-col">
-      <div className="space-y-2">
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-          <PlusCircle className="w-8 h-8 text-primary" />
-          Add a New Course
-        </h2>
-        <p className="text-slate-500 dark:text-slate-400">Import a Telegram channel or group to track progress and organize your learning.</p>
+    <div className="p-6 md:p-10 max-w-4xl mx-auto space-y-8 w-full pb-28">
+      
+      {/* Header */}
+      <div className="space-y-3">
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline transition-colors cursor-pointer px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/60"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Dashboard</span>
+        </button>
+
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
+            <PlusCircle className="w-7 h-7 text-blue-600 dark:text-blue-400" />
+            <span>Import Telegram Courses</span>
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
+            Select any Telegram channel or forum group you have access to. TeleLearn will automatically structure lessons, video topics, and PDFs.
+          </p>
+        </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 flex-1 flex flex-col overflow-hidden">
-        <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center gap-4">
-          <div className="relative flex-1">
-            <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Search your Telegram channels..." 
-              className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/50 outline-none transition-all dark:text-slate-200 placeholder:text-slate-500"
-            />
-          </div>
+      {/* Main Card */}
+      <div className="bg-white dark:bg-[#131d31] rounded-2xl border border-slate-300 dark:border-slate-800 shadow-sm p-6 space-y-4">
+        
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input 
+            type="text"
+            placeholder="Search your Telegram channels..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-xs md:text-sm font-medium focus:border-blue-600 focus:ring-2 focus:ring-blue-600/15 outline-none transition-colors dark:text-white placeholder-slate-400"
+          />
         </div>
 
-        <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-          {channels.length === 0 ? (
-            <div className="p-12 text-center text-slate-500 dark:text-slate-400 space-y-3">
-              <Layers className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-700" />
-              <p className="font-medium text-lg">No channels found</p>
-              <p className="text-sm">Make sure you are a member of the Telegram channels you want to import.</p>
+        {/* Channel List */}
+        <div className="space-y-2.5 pt-1">
+          {isLoading && !channelsData ? (
+            <div className="space-y-2.5">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-16 rounded-xl skeleton" />
+              ))}
+            </div>
+          ) : filteredChannels.length === 0 ? (
+            <div className="p-10 text-center text-slate-500 space-y-2">
+              <Layers className="w-10 h-10 mx-auto text-slate-400 opacity-50" />
+              <p className="font-semibold text-xs text-slate-700 dark:text-slate-300">
+                {searchQuery ? 'No matching channels found' : 'No Telegram channels found'}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                Ensure you are an active member of the Telegram channels you want to import.
+              </p>
             </div>
           ) : (
-            channels.map((channel: any) => (
-              <div key={channel.id} className="p-5 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-primary/10 dark:bg-primary/20 rounded-xl flex items-center justify-center text-primary font-bold text-lg">
-                    {channel.name ? channel.name.charAt(0).toUpperCase() : '#'}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-base text-slate-900 dark:text-white group-hover:text-primary transition-colors">{channel.name}</h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{channel.is_channel ? 'Telegram Channel' : 'Telegram Group'}</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => handleSync(channel.id)}
-                  disabled={loading && syncingId === channel.id}
-                  className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition-all shadow-sm flex items-center gap-2"
+            filteredChannels.map((channel: any) => {
+              const isSyncing = syncingId === channel.id;
+              const isSynced = syncedIds.includes(channel.id);
+
+              return (
+                <div
+                  key={channel.id}
+                  className="p-4 rounded-xl flex items-center justify-between gap-4 border border-slate-300 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 hover:border-blue-400 dark:hover:border-blue-600 transition-colors"
                 >
-                  {loading && syncingId === channel.id ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Syncing...
-                    </>
-                  ) : (
-                    'Import Course'
-                  )}
-                </button>
-              </div>
-            ))
+                  <div className="flex items-center gap-3.5 min-w-0 flex-1">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-base shrink-0 border border-blue-200 dark:border-blue-900/60">
+                      {channel.name ? channel.name.charAt(0).toUpperCase() : '#'}
+                    </div>
+
+                    <div className="min-w-0 space-y-0.5">
+                      <h4 className="font-semibold text-xs md:text-sm text-slate-900 dark:text-white truncate">
+                        {channel.name || 'Untitled Channel'}
+                      </h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                        {channel.is_channel ? 'Broadcast Channel' : 'Group / Forum'} • ID: {channel.id}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleSync(channel.id)}
+                    disabled={isSyncing || isSynced}
+                    className={`px-4 py-2 rounded-xl font-semibold text-xs flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer shrink-0 ${
+                      isSynced
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    } disabled:opacity-50`}
+                  >
+                    {isSyncing ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Importing...</span>
+                      </>
+                    ) : isSynced ? (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Imported</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Import Course</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
       </div>

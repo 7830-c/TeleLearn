@@ -3,34 +3,121 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --color-slate-50: #F3EFE5;
-  --color-slate-100: #EBE6D8;
-  --color-background: #f8fafc;
-  --color-surface: #ffffff;
-  --color-primary: #1a73e8;
-  --color-primary-fixed: #d8e2ff;
-  --color-on-surface: #0f172a;
-  --color-on-surface-variant: #475569;
-  --color-outline-variant: #e2e8f0;
-  --color-error: #ef4444;
-  --color-surface-container: #f1f5f9;
-  --color-surface-container-low: #f8fafc;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-light: #dbeafe;
+  --color-primary-dark: #1e40af;
+  --color-accent: #0284c7;
+  --color-accent-amber: #d97706;
+  --color-accent-emerald: #059669;
 }
 
 @layer base {
+  :root {
+    --bg-main: #f1f5f9;
+    --card-bg: #ffffff;
+    --card-border: #cbd5e1;
+    --glass-nav: rgba(255, 255, 255, 0.92);
+    --glow-color: rgba(37, 99, 235, 0.08);
+  }
+
+  .dark {
+    --bg-main: #0b1120;
+    --card-bg: #131d31;
+    --card-border: #22324e;
+    --glass-nav: rgba(11, 17, 32, 0.92);
+    --glow-color: rgba(37, 99, 235, 0.15);
+  }
+
+  * {
+    border-color: var(--card-border);
+  }
+
   body {
-    @apply bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200;
+    background-color: var(--bg-main);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
   }
 }
 
-@layer components {
-  /* Light Mode Contrast Fixes */
-  :root:not(.dark) .bg-white {
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-    border-color: #cbd5e1; /* slightly darker than e2e8f0 for better visibility */
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
+/* Professional Panel Utilities */
+.glass-panel {
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+}
+
+.glass-nav {
+  background: var(--glass-nav);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--card-border);
+}
+
+.glass-card-hover {
+  transition: all 0.2s ease-in-out;
+}
+
+.glass-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px var(--glow-color);
+  border-color: #3b82f6;
+}
+
+/* Skeleton Loading Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
   }
-  
-  :root:not(.dark) input {
-    border: 1px solid #cbd5e1;
+
+  100% {
+    background-position: 200% 0;
   }
+}
+
+.skeleton {
+  background: linear-gradient(90deg,
+      rgba(203, 213, 225, 0.4) 25%,
+      rgba(203, 213, 225, 0.7) 37%,
+      rgba(203, 213, 225, 0.4) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite ease-in-out;
+  border-radius: 0.75rem;
+}
+
+.dark .skeleton {
+  background: linear-gradient(90deg,
+      rgba(30, 41, 59, 0.6) 25%,
+      rgba(51, 65, 85, 0.7) 37%,
+      rgba(30, 41, 59, 0.6) 63%);
+  background-size: 200% 100%;
+}
+
+/* Professional Brand Gradient */
+.brand-blue-text {
+  color: #2563eb;
+}
+
+.dark .brand-blue-text {
+  color: #60a5fa;
 }

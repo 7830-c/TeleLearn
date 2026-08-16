@@ -2,54 +2,29 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: 'http://localhost:8000/api',
+  timeout: 30000,
 });
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-// Cache only specific heavy endpoints
-const shouldCache = (url: string | undefined) => {
-  if (!url) return false;
-  // Cache course list, individual course structures, and channels
-  return url.startsWith('/courses') && !url.includes('/sync') && !url.includes('/download') && !url.includes('/stream');
-};
-
+// Simple request interceptor — just passes through.
+// Caching is now handled by the useCache hook (SWR pattern).
 api.interceptors.request.use((config) => {
-  if (config.method?.toLowerCase() === 'get' && shouldCache(config.url)) {
-    const key = `api_cache_${config.url}`;
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      try {
-        const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp < CACHE_TTL) {
-          // Serve from cache by short-circuiting adapter
-          config.adapter = function (config) {
-            return Promise.resolve({
-              data,
-              status: 200,
-              statusText: 'OK',
-              headers: {},
-              config,
-              request: {}
-            });
-          };
-        }
-      } catch (e) {
-        localStorage.removeItem(key);
-      }
-    }
-  }
   return config;
 });
 
-api.interceptors.response.use((response) => {
-  if (response.config.method?.toLowerCase() === 'get' && shouldCache(response.config.url)) {
-    const key = `api_cache_${response.config.url}`;
-    localStorage.setItem(key, JSON.stringify({
-      data: response.data,
-      timestamp: Date.now()
-    }));
+// Response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Log but don't swallow errors — let components handle them
+    if (error.response?.status === 401) {
+      // Session expired — redirect to login
+      localStorage.removeItem('phone');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
   }
-  return response;
-});
+);
 
 export default api;

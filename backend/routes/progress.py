@@ -20,6 +20,7 @@ class BookmarkRequest(BaseModel):
     phone: str
     lesson_id: int
     title: str
+    course_id: str | None = None
 
 async def get_user_by_phone(session: AsyncSession, phone: str) -> User:
     result = await session.execute(select(User).filter_by(phone=phone))
@@ -127,7 +128,12 @@ async def toggle_bookmark(request: BookmarkRequest):
                 await session.commit()
                 return {"bookmarked": False}
             else:
-                bookmark = Bookmark(user_id=user.id, lesson_id=request.lesson_id, title=request.title)
+                bookmark = Bookmark(
+                    user_id=user.id, 
+                    lesson_id=request.lesson_id, 
+                    course_id=request.course_id,
+                    title=request.title
+                )
                 session.add(bookmark)
                 await session.commit()
                 return {"bookmarked": True}
@@ -146,13 +152,59 @@ async def get_bookmarks(phone: str):
                 select(Bookmark).filter_by(user_id=user.id)
             )
             bookmarks = result.scalars().all()
+
+            # Pre-load courses for lookup
+            c_res = await session.execute(select(Course))
+            all_courses = []
+            for c_row in c_res.scalars().all():
+                if c_row.data:
+                    c_dict = json.loads(c_row.data)
+                    c_dict["_id"] = str(c_row.id)
+                    all_courses.append(c_dict)
             
-            return {
-                "bookmarks": [
-                    {"_id": str(b.id), "lesson_id": b.lesson_id, "title": b.title} 
-                    for b in bookmarks
-                ]
-            }
+            output = []
+            for b in bookmarks:
+                cid = getattr(b, "course_id", None)
+                course_title = "Course"
+                module_title = "Module"
+                
+                # If course_id is missing, search in all_courses
+                if not cid:
+                    for c in all_courses:
+                        for mod in c.get("modules", []):
+                            if any(l.get("id") == b.lesson_id for l in mod.get("lessons", [])):
+                                cid = str(c.get("_id"))
+                                course_title = c.get("title", course_title)
+                                module_title = mod.get("title", module_title)
+                                break
+                        if cid:
+                            break
+                else:
+                    # Lookup titles from matching course
+                    matching = next((c for c in all_courses if str(c.get("_id")) == str(cid)), None)
+                    if matching:
+                        course_title = matching.get("title", course_title)
+                        for mod in matching.get("modules", []):
+                            if any(l.get("id") == b.lesson_id for l in mod.get("lessons", [])):
+                                module_title = mod.get("title", module_title)
+                                break
+
+                # Fallback to first course if still empty
+                if not cid and all_courses:
+                    cid = str(all_courses[0].get("_id"))
+                    course_title = all_courses[0].get("title", course_title)
+
+                output.append({
+                    "_id": str(b.id),
+                    "id": b.id,
+                    "lesson_id": b.lesson_id,
+                    "course_id": cid or "1",
+                    "title": b.title,
+                    "course_title": course_title,
+                    "module_title": module_title,
+                })
+
+            return {"bookmarks": output}
     except HTTPException:
         raise
     except Exception as e:
@@ -210,11 +262,33 @@ async def continue_watching(phone: str):
                 progress = result.scalars().first()
                 
             if progress:
+                course_title = "Course"
+                module_title = "Module"
+                lesson_title = f"Lecture #{progress.lesson_id}"
+                
+                try:
+                    c_res = await session.execute(select(Course).filter_by(id=int(progress.course_id)))
+                    row = c_res.scalars().first()
+                    if row and row.data:
+                        c_data = json.loads(row.data)
+                        course_title = c_data.get("title", course_title)
+                        for mod in c_data.get("modules", []):
+                            for les in mod.get("lessons", []):
+                                if les.get("id") == progress.lesson_id:
+                                    module_title = mod.get("title", "Module")
+                                    lesson_title = les.get("file_name") or les.get("text") or lesson_title
+                                    break
+                except Exception:
+                    pass
+
                 return {
                     "course_id": progress.course_id,
                     "lesson_id": progress.lesson_id,
                     "progress_seconds": progress.progress_seconds,
-                    "duration_seconds": progress.duration_seconds
+                    "duration_seconds": progress.duration_seconds,
+                    "course_title": course_title,
+                    "module_title": module_title,
+                    "lesson_title": lesson_title,
                 }
             return None
     except HTTPException:

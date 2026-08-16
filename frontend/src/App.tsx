@@ -1,4 +1,4 @@
-import React from 'react';
+import type { ReactElement } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
@@ -9,7 +9,7 @@ import BookmarksView from './components/BookmarksView';
 import AddCourseView from './components/AddCourseView';
 
 function App() {
-  const PrivateRoute = ({ children }: { children: JSX.Element }) => {
+  const PrivateRoute = ({ children }: { children: ReactElement }) => {
     return localStorage.getItem('phone') ? <Layout>{children}</Layout> : <Navigate to="/login" />;
   };
 
