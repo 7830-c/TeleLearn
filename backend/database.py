@@ -74,6 +74,10 @@ async def init_db():
             await conn.execute(text("ALTER TABLE bookmarks ADD COLUMN IF NOT EXISTS course_id VARCHAR;"))
             await conn.execute(text("ALTER TABLE courses ADD COLUMN IF NOT EXISTS user_id INTEGER;"))
             await conn.execute(text("ALTER TABLE courses DROP CONSTRAINT IF EXISTS courses_channel_id_key;"))
+            
+            # Enable Row Level Security (RLS) on all public tables for database security
+            for tbl in ["users", "courses", "progress", "study_logs", "bookmarks"]:
+                await conn.execute(text(f"ALTER TABLE {tbl} ENABLE ROW LEVEL SECURITY;"))
         except Exception as e:
             print(f"[migration] Note: {e}")
     print("Database schema initialized")
