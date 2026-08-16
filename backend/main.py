@@ -43,3 +43,8 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"]
 @app.get("/")
 def root():
     return {"message": "Welcome to TeleLearn API"}
+
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "service": "telelearn-api"}
