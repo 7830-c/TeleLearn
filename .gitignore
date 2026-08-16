@@ -1,17 +1,47 @@
-# Dependencies (Updated for your folder structure)
+# Dependencies
 frontend/node_modules/
+node_modules/
 backend/venv/
+backend/env/
+venv/
+env/
 
 # Production builds
 frontend/dist/
 frontend/dist-ssr/
+dist/
 
-# Environment files
-*.local
+# Environment files & Secrets
+.env
+.env.*
+!.env.example
 backend/.env
+frontend/.env
+frontend/.env.local
+*.local
+
+# Telegram Sessions & Cache (zero-leak)
+backend/sessions/
+backend/cache/
+sessions/
+cache/
+*.session
+*.session-journal
+*.sessionstring
+
+# Python cache, databases & artifacts
+__pycache__/
+backend/__pycache__/
+backend/routes/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.db
+*.sqlite
+*.sqlite3
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -19,10 +49,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Editor directories and files
+# Editor directories and OS files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*

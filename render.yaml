@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: telelearn-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        value: "34979954"
+      - key: TELEGRAM_API_HASH
+        value: "55a2f5c696725c26d9b2373e7c1ba1ad"
