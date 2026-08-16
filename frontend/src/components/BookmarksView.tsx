@@ -17,7 +17,7 @@ export default function BookmarksView() {
   );
 
   const { data: coursesData } = useCache<{ courses: any[] }>(
-    '/courses/',
+    phone ? `/courses/?phone=${encodeURIComponent(phone)}` : null,
     { ttl: 15 * 60 * 1000 }
   );
 

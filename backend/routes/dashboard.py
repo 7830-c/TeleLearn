@@ -44,8 +44,17 @@ async def get_dashboard(phone: str, req: Request = None):
     async with get_db_session() as session:
         user = await _get_user_by_phone(session, clean_phone)
 
-        # 1. Courses
-        course_result = await session.execute(select(Course))
+        # If no user found, return empty courses and zero metrics
+        if not user:
+            return {
+                "courses": [],
+                "metrics": {"total_hours": 0, "hours_today": 0, "streak_days": 0},
+                "continue_watching": None,
+                "bookmarks_count": 0,
+            }
+
+        # 1. Courses strictly for this specific user
+        course_result = await session.execute(select(Course).filter_by(user_id=user.id))
         courses = []
         for row in course_result.scalars().all():
             if row.data:
@@ -54,13 +63,12 @@ async def get_dashboard(phone: str, req: Request = None):
                 courses.append(c)
 
         completed_lessons_by_course = {}
-        if user:
-            user_progress_res = await session.execute(
-                select(Progress).filter_by(user_id=user.id, is_completed=True)
-            )
-            for p in user_progress_res.scalars().all():
-                cid = str(p.course_id)
-                completed_lessons_by_course.setdefault(cid, set()).add(p.lesson_id)
+        user_progress_res = await session.execute(
+            select(Progress).filter_by(user_id=user.id, is_completed=True)
+        )
+        for p in user_progress_res.scalars().all():
+            cid = str(p.course_id)
+            completed_lessons_by_course.setdefault(cid, set()).add(p.lesson_id)
 
         # Attach progress metrics to each course catalog item
         for c in courses:
@@ -73,15 +81,6 @@ async def get_dashboard(phone: str, req: Request = None):
             c["total_lessons"] = total_lessons
             c["completed_lessons"] = completed_count
             c["progress_percentage"] = round((completed_count / total_lessons * 100) if total_lessons > 0 else 0)
-
-        # If no user found, return courses with empty user data
-        if not user:
-            return {
-                "courses": courses,
-                "metrics": {"total_hours": 0, "hours_today": 0, "streak_days": 0},
-                "continue_watching": None,
-                "bookmarks_count": 0,
-            }
 
         # 2. Metrics
         total_res = await session.execute(

@@ -20,7 +20,7 @@ from telethon.tl.types import (
     MessageActionTopicEdit,
 )
 from telegram_client import get_client, normalize_phone
-from database import get_db_session, Course
+from database import get_db_session, Course, User
 from sqlalchemy.future import select
 
 router = APIRouter()
@@ -204,13 +204,21 @@ async def sync_course(request: CourseSyncRequest):
         course_data = {"channel_id": request.channel_id, "title": channel_name, "modules": modules}
 
         async with get_db_session() as session:
-            result = await session.execute(select(Course).filter_by(channel_id=request.channel_id))
+            clean_phone = normalize_phone(request.phone)
+            user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+            user = user_res.scalars().first()
+            user_id = user.id if user else None
+
+            result = await session.execute(
+                select(Course).filter_by(user_id=user_id, channel_id=request.channel_id)
+            )
             course = result.scalars().first()
             if course:
                 course.title = course_data["title"]
                 course.data = json.dumps(course_data)
             else:
                 course = Course(
+                    user_id=user_id,
                     channel_id=request.channel_id,
                     title=course_data["title"],
                     data=json.dumps(course_data)
@@ -229,9 +237,19 @@ async def sync_course(request: CourseSyncRequest):
 
 
 @router.get("/")
-async def get_courses():
+async def get_courses(phone: str = None):
     async with get_db_session() as session:
-        result = await session.execute(select(Course))
+        if phone:
+            clean_phone = normalize_phone(phone)
+            user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+            user = user_res.scalars().first()
+            if user:
+                result = await session.execute(select(Course).filter_by(user_id=user.id))
+            else:
+                return {"courses": []}
+        else:
+            result = await session.execute(select(Course))
+
         courses = []
         for row in result.scalars().all():
             if row.data:
@@ -254,9 +272,19 @@ async def get_course(course_id: str):
 
 
 @router.delete("/{course_id}")
-async def delete_course(course_id: str):
+async def delete_course(course_id: str, phone: str = None):
     async with get_db_session() as session:
-        result = await session.execute(select(Course).filter_by(id=int(course_id)))
+        if phone:
+            clean_phone = normalize_phone(phone)
+            user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+            user = user_res.scalars().first()
+            if user:
+                result = await session.execute(select(Course).filter_by(id=int(course_id), user_id=user.id))
+            else:
+                raise HTTPException(status_code=404, detail="User not found")
+        else:
+            result = await session.execute(select(Course).filter_by(id=int(course_id)))
+
         course = result.scalars().first()
         if course:
             await session.delete(course)

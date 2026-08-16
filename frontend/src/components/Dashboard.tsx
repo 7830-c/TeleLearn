@@ -69,7 +69,7 @@ export default function Dashboard() {
     e.stopPropagation();
     if (!window.confirm(`Are you sure you want to remove "${title}"?`)) return;
     try {
-      await api.delete(`/courses/${courseId}`);
+      await api.delete(`/courses/${courseId}?phone=${encodeURIComponent(phone)}`);
       invalidateCache('/dashboard');
       invalidateCache('/courses');
       await refresh();

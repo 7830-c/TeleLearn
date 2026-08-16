@@ -36,7 +36,8 @@ class User(Base):
 class Course(Base):
     __tablename__ = "courses"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    channel_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True)
+    channel_id = Column(BigInteger, index=True, nullable=False)
     title = Column(String, nullable=True)
     data = Column(Text, nullable=True) # Stored as JSON
 
@@ -71,6 +72,8 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         try:
             await conn.execute(text("ALTER TABLE bookmarks ADD COLUMN IF NOT EXISTS course_id VARCHAR;"))
+            await conn.execute(text("ALTER TABLE courses ADD COLUMN IF NOT EXISTS user_id INTEGER;"))
+            await conn.execute(text("ALTER TABLE courses DROP CONSTRAINT IF EXISTS courses_channel_id_key;"))
         except Exception as e:
             print(f"[migration] Note: {e}")
     print("Database schema initialized")
