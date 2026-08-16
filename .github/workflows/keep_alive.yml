@@ -12,4 +12,4 @@ jobs:
     steps:
       - name: Ping Backend Health Endpoint
         run: |
-          curl -f -sS "https://telelearn-backend.onrender.com/health" || echo "Ping attempted"
+          curl -f -sS "https://telelearn.onrender.com/health" || echo "Ping attempted"
