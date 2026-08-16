@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-slate-50: #F3EFE5;
+  --color-slate-100: #EBE6D8;
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-primary: #1a73e8;
+  --color-primary-fixed: #d8e2ff;
+  --color-on-surface: #0f172a;
+  --color-on-surface-variant: #475569;
+  --color-outline-variant: #e2e8f0;
+  --color-error: #ef4444;
+  --color-surface-container: #f1f5f9;
+  --color-surface-container-low: #f8fafc;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200;
+  }
+}
+
+@layer components {
+  /* Light Mode Contrast Fixes */
+  :root:not(.dark) .bg-white {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    border-color: #cbd5e1; /* slightly darker than e2e8f0 for better visibility */
+  }
+  
+  :root:not(.dark) input {
+    border: 1px solid #cbd5e1;
+  }
+}
