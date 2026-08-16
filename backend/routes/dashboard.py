@@ -1,6 +1,6 @@
 import json
 import time
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.future import select
 from sqlalchemy import func
 from database import get_db_session, Course, Progress, Bookmark, User, StudyLog
@@ -26,12 +26,17 @@ async def _get_user_by_phone(session, phone: str):
 
 
 @router.get("/")
-async def get_dashboard(phone: str):
+async def get_dashboard(phone: str, req: Request = None):
     clean_phone = normalize_phone(phone)
+
+    # Check if client requested a fresh cache bypass
+    no_cache = False
+    if req:
+        no_cache = "no-cache" in req.headers.get("Cache-Control", "") or req.query_params.get("_t") is not None
 
     # Check in-memory cache first for instant sub-millisecond return
     now = time.time()
-    if clean_phone in _dashboard_cache:
+    if not no_cache and clean_phone in _dashboard_cache:
         cached_time, cached_data = _dashboard_cache[clean_phone]
         if now - cached_time < _CACHE_TTL:
             return cached_data
