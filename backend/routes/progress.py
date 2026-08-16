@@ -1,9 +1,12 @@
+import json
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
-from database import get_db_session, Progress, Bookmark, User, StudyLog
+from database import get_db_session, Progress, Bookmark, User, StudyLog, Course
+from telegram_client import normalize_phone
+from routes.dashboard import invalidate_dashboard_cache
 
 router = APIRouter()
 
@@ -23,16 +26,23 @@ class BookmarkRequest(BaseModel):
     course_id: str | None = None
 
 async def get_user_by_phone(session: AsyncSession, phone: str) -> User:
-    result = await session.execute(select(User).filter_by(phone=phone))
+    clean = normalize_phone(phone)
+    result = await session.execute(
+        select(User).filter((User.phone == phone) | (User.phone == clean))
+    )
     user = result.scalars().first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # Auto-create user record so bookmarks and progress never error
+        user = User(phone=clean)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
     return user
 
 @router.post("/update")
 async def update_progress(request: ProgressUpdateRequest):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, request.phone)
             
             # 1. Update overall Progress
@@ -75,6 +85,7 @@ async def update_progress(request: ProgressUpdateRequest):
                     session.add(study_log)
                 
             await session.commit()
+            invalidate_dashboard_cache(request.phone)
             return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -82,7 +93,7 @@ async def update_progress(request: ProgressUpdateRequest):
 @router.get("/summary/{phone}/{course_id}")
 async def get_progress_summary(phone: str, course_id: str):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, phone)
             
             result = await session.execute(
@@ -115,7 +126,7 @@ async def get_progress_summary(phone: str, course_id: str):
 @router.post("/bookmark")
 async def toggle_bookmark(request: BookmarkRequest):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, request.phone)
             
             result = await session.execute(
@@ -126,6 +137,7 @@ async def toggle_bookmark(request: BookmarkRequest):
             if existing:
                 await session.delete(existing)
                 await session.commit()
+                invalidate_dashboard_cache(request.phone)
                 return {"bookmarked": False}
             else:
                 bookmark = Bookmark(
@@ -136,6 +148,7 @@ async def toggle_bookmark(request: BookmarkRequest):
                 )
                 session.add(bookmark)
                 await session.commit()
+                invalidate_dashboard_cache(request.phone)
                 return {"bookmarked": True}
     except HTTPException:
         raise
@@ -145,7 +158,7 @@ async def toggle_bookmark(request: BookmarkRequest):
 @router.get("/bookmarks/{phone}")
 async def get_bookmarks(phone: str):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, phone)
             
             result = await session.execute(
@@ -213,7 +226,7 @@ async def get_bookmarks(phone: str):
 @router.get("/metrics/{phone}")
 async def get_metrics(phone: str):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, phone)
             
             # Total Hours
@@ -242,7 +255,7 @@ async def get_metrics(phone: str):
 @router.get("/continue-watching/{phone}")
 async def continue_watching(phone: str):
     try:
-        async for session in get_db_session():
+        async with get_db_session() as session:
             user = await get_user_by_phone(session, phone)
             
             result = await session.execute(

@@ -2,20 +2,24 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, Integer, BigInteger, String, Boolean, ForeignKey, Text, DateTime, Date
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, ForeignKey, Text, DateTime, Date, text
 from sqlalchemy.sql import func
 
-load_dotenv()
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path)
 
 # Ensure DATABASE_URL uses asyncpg (e.g. postgresql+asyncpg://...)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///telelearn.db")
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    pool_pre_ping=True
-)
+engine_kwargs = {"echo": False, "future": True, "pool_pre_ping": True}
+if "postgresql" in DATABASE_URL:
+    engine_kwargs.update({
+        "pool_size": 20,
+        "max_overflow": 10,
+        "pool_recycle": 1800,
+    })
+
+engine = create_async_engine(DATABASE_URL, **engine_kwargs)
 
 AsyncSessionLocal = sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
@@ -65,8 +69,16 @@ class Bookmark(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.execute(text("ALTER TABLE bookmarks ADD COLUMN IF NOT EXISTS course_id VARCHAR;"))
+        except Exception as e:
+            print(f"[migration] Note: {e}")
     print("Database schema initialized")
 
-async def get_db_session() -> AsyncSession:
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
+@asynccontextmanager
+async def get_db_session() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         yield session

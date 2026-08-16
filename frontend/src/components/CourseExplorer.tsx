@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import useCache from '../hooks/useCache';
+import { API_BASE } from '../api';
 import { 
   ChevronLeft, 
   Folder, 
@@ -43,13 +44,14 @@ export default function CourseExplorer() {
     );
     if (!proceed) return;
 
-    const url = `http://localhost:8000/api/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${note.id}`;
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', noteName);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const url = `${API_BASE}/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${note.id}`;
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      try { document.body.removeChild(iframe); } catch {}
+    }, 60000);
   };
 
   if (isCourseLoading && !course) {

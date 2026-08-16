@@ -8,7 +8,8 @@ from sqlalchemy.future import select
 from security import encrypt_session, decrypt_session
 from dotenv import load_dotenv
 
-load_dotenv()
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path)
 
 API_ID = int(os.environ.get("TELEGRAM_API_ID", "34979954"))
 API_HASH = os.environ.get("TELEGRAM_API_HASH", "55a2f5c696725c26d9b2373e7c1ba1ad")
@@ -33,11 +34,14 @@ async def _get_session_string(clean_phone: str) -> str:
     """
     Read session string from PostgreSQL Database User table.
     """
-    async for session in get_db_session():
-        result = await session.execute(select(User).filter_by(phone=clean_phone))
-        user = result.scalars().first()
-        if user and user.session_string:
-            return decrypt_session(user.session_string)
+    try:
+        async with get_db_session() as session:
+            result = await session.execute(select(User).filter_by(phone=clean_phone))
+            user = result.scalars().first()
+            if user and user.session_string:
+                return decrypt_session(user.session_string)
+    except Exception as e:
+        print(f"[telegram_client] DB read error: {e}")
             
     # Check for legacy .sessionstring file and migrate
     string_file = os.path.join(SESSION_DIR, f"{clean_phone}.sessionstring")
@@ -52,7 +56,7 @@ async def save_session_string(clean_phone: str, session_str: str):
     """Save StringSession to PostgreSQL Database."""
     encrypted_str = encrypt_session(session_str)
     
-    async for session in get_db_session():
+    async with get_db_session() as session:
         result = await session.execute(select(User).filter_by(phone=clean_phone))
         user = result.scalars().first()
         
@@ -63,7 +67,6 @@ async def save_session_string(clean_phone: str, session_str: str):
             session.add(user)
             
         await session.commit()
-        break
 
 
 async def get_client(phone: str) -> TelegramClient:

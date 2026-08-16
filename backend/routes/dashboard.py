@@ -36,7 +36,7 @@ async def get_dashboard(phone: str):
         if now - cached_time < _CACHE_TTL:
             return cached_data
 
-    async for session in get_db_session():
+    async with get_db_session() as session:
         user = await _get_user_by_phone(session, clean_phone)
 
         # 1. Courses
@@ -47,6 +47,27 @@ async def get_dashboard(phone: str):
                 c = json.loads(row.data)
                 c["_id"] = str(row.id)
                 courses.append(c)
+
+        completed_lessons_by_course = {}
+        if user:
+            user_progress_res = await session.execute(
+                select(Progress).filter_by(user_id=user.id, is_completed=True)
+            )
+            for p in user_progress_res.scalars().all():
+                cid = str(p.course_id)
+                completed_lessons_by_course.setdefault(cid, set()).add(p.lesson_id)
+
+        # Attach progress metrics to each course catalog item
+        for c in courses:
+            cid = str(c.get("_id"))
+            all_lessons = [l for mod in c.get("modules", []) for l in mod.get("lessons", [])]
+            total_lessons = len(all_lessons)
+            completed_set = completed_lessons_by_course.get(cid, set())
+            completed_count = sum(1 for l in all_lessons if l.get("id") in completed_set)
+            
+            c["total_lessons"] = total_lessons
+            c["completed_lessons"] = completed_count
+            c["progress_percentage"] = round((completed_count / total_lessons * 100) if total_lessons > 0 else 0)
 
         # If no user found, return courses with empty user data
         if not user:

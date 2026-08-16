@@ -372,6 +372,22 @@ export default function Dashboard() {
                       {totalNotes > 0 && <span>{totalNotes} Notes</span>}
                     </div>
 
+                    {/* Course Video Progress Bar */}
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex justify-between items-center text-[10px] sm:text-[11px] font-semibold">
+                        <span className="text-slate-600 dark:text-slate-400">Progress</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-bold">
+                          {course.completed_lessons || 0} / {totalLessons} ({course.progress_percentage || 0}%)
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700/60 h-1.5 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, course.progress_percentage || 0)}%` }}
+                        />
+                      </div>
+                    </div>
+
                     <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs font-semibold text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform">
                       <span>Open Course</span>
                       <ChevronRight className="w-4 h-4" />

@@ -28,17 +28,7 @@ router = APIRouter()
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-# ── Streaming constants ───────────────────────────────────────────────────────
-CHUNK_SIZE = 1024 * 1024        # 1 MB chunk granularity (up from 512KB)
-STREAM_YIELD_SIZE = 256 * 1024  # Yield to client in 256KB pieces for responsiveness
-PARALLELISM = {"low": 3, "medium": 6, "high": 10}
-
-# ── Background pre-fetch tracking ─────────────────────────────────────────────
-_prefetch_tasks: dict[str, asyncio.Task] = {}
-_prefetch_lock = asyncio.Lock()
-
-
-# ─── helpers ─────────────────────────────────────────────────────────────────
+# ─── Range & ETag helpers ───────────────────────────────────────────────────
 def parse_range_header(range_header: str, file_size: int):
     start, end, code = 0, file_size - 1, 200
     if range_header:
@@ -52,169 +42,67 @@ def parse_range_header(range_header: str, file_size: int):
     return start, end, code
 
 
-def _cache_path_for(channel_id: int, msg_id: int) -> str:
-    return os.path.join(CACHE_DIR, f"{channel_id}_{msg_id}.mp4")
-
-
-def _meta_path_for(channel_id: int, msg_id: int) -> str:
-    return os.path.join(CACHE_DIR, f"{channel_id}_{msg_id}.meta")
-
-
 def _etag_for(channel_id: int, msg_id: int, file_size: int) -> str:
     return hashlib.md5(f"{channel_id}:{msg_id}:{file_size}".encode()).hexdigest()
 
 
-async def _get_cached_size(cache_path: str) -> int:
-    """Get how many bytes are actually written to the cache file."""
+def _clean_cache_directory(max_size_mb: int = 10, max_age_hours: int = 24):
+    """
+    Automatic server cache cleanup:
+    1. Removes any files older than max_age_hours (default: 24 hours).
+    2. Deletes any accidental non-thumbnail/temporary files.
+    3. Strictly caps total cache directory size to max_size_mb (default: 10 MB).
+    """
     try:
-        stat = await aiofiles.os.stat(cache_path)
-        return stat.st_size
-    except (FileNotFoundError, OSError):
-        return 0
+        now = time.time()
+        max_age_seconds = max_age_hours * 3600
+        max_size_bytes = max_size_mb * 1024 * 1024
 
+        if not os.path.exists(CACHE_DIR):
+            return
 
-async def _fetch_chunk(client, media, byte_offset: int, max_bytes: int) -> bytes:
-    """Fetch chunk cleanly using iter_download with aligned offset support up to 64-bit."""
-    aligned_offset = (byte_offset // CHUNK_SIZE) * CHUNK_SIZE
-    skip_bytes = byte_offset - aligned_offset
-    buf = bytearray()
-    try:
-        async for piece in client.iter_download(media, offset=aligned_offset, request_size=CHUNK_SIZE):
-            if skip_bytes > 0:
-                piece = piece[skip_bytes:]
-                skip_bytes = 0
+        all_files = []
+        for fname in os.listdir(CACHE_DIR):
+            fpath = os.path.join(CACHE_DIR, fname)
+            if not os.path.isfile(fpath):
+                continue
             
-            buf.extend(piece)
-            if len(buf) >= max_bytes:
-                break
-    except Exception as e:
-        print(f"[stream] iter_download error at offset {byte_offset}: {e}")
-    return bytes(buf[:max_bytes])
-
-
-async def _append_to_cache(cache_path: str, data: bytes, offset: int):
-    """Write data to the cache file at the specified offset."""
-    try:
-        async with aiofiles.open(cache_path, "r+b") as f:
-            await f.seek(offset)
-            await f.write(data)
-    except FileNotFoundError:
-        # File doesn't exist yet — create it
-        async with aiofiles.open(cache_path, "wb") as f:
-            if offset > 0:
-                await f.seek(offset)
-            await f.write(data)
-
-
-async def _read_from_cache(cache_path: str, offset: int, length: int) -> bytes:
-    """Read data from the cache file."""
-    try:
-        async with aiofiles.open(cache_path, "rb") as f:
-            await f.seek(offset)
-            return await f.read(length)
-    except (FileNotFoundError, OSError):
-        return b""
-
-
-async def _save_meta(channel_id: int, msg_id: int, file_size: int, cached_bytes: int):
-    """Save metadata about how much of the file is cached."""
-    meta_path = _meta_path_for(channel_id, msg_id)
-    data = json.dumps({"file_size": file_size, "cached_bytes": cached_bytes, "ts": time.time()})
-    async with aiofiles.open(meta_path, "w") as f:
-        await f.write(data)
-
-
-async def _load_meta(channel_id: int, msg_id: int) -> dict | None:
-    """Load cache metadata."""
-    meta_path = _meta_path_for(channel_id, msg_id)
-    try:
-        async with aiofiles.open(meta_path, "r") as f:
-            return json.loads(await f.read())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-
-
-# ── Background pre-fetch: download entire file to cache ──────────────────────
-async def _prefetch_full_file(phone: str, channel_id: int, msg_id: int, file_size: int, quality: str):
-    """Background task: download the entire file from Telegram and cache it to disk."""
-    cache_path = _cache_path_for(channel_id, msg_id)
-    task_key = f"{channel_id}_{msg_id}"
-
-    try:
-        cached_size = await _get_cached_size(cache_path)
-        if cached_size >= file_size:
-            # Already fully cached
-            return
-
-        clean_phone = normalize_phone(phone)
-        client = await get_client(clean_phone)
-        msg = await client.get_messages(channel_id, ids=msg_id)
-        if not msg or not msg.media or not hasattr(msg.media, "document"):
-            return
-
-        n_parallel = PARALLELISM.get(quality, PARALLELISM["medium"])
-        start_offset = cached_size  # Resume from where we left off
-
-        # Create/extend the file to full size so we can write at any offset
-        if cached_size == 0:
-            async with aiofiles.open(cache_path, "wb") as f:
-                pass  # Create empty file
-
-        positions = list(range(start_offset, file_size, CHUNK_SIZE))
-        if not positions:
-            return
-
-        print(f"[prefetch] Starting background download for {channel_id}/{msg_id} from offset {start_offset} ({len(positions)} chunks)")
-
-        # Process chunks in batches for controlled parallelism
-        for batch_start in range(0, len(positions), n_parallel):
-            batch = positions[batch_start:batch_start + n_parallel]
-            tasks = []
-            for pos in batch:
-                max_b = min(CHUNK_SIZE, file_size - pos)
-                tasks.append(_fetch_chunk(client, msg.media, pos, max_b))
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print(f"[prefetch] chunk error at {batch[i]}: {result}")
+            # Immediately delete any stray video files to preserve 0MB video storage
+            if not fname.startswith("thumb_"):
+                try:
+                    os.remove(fpath)
                     continue
-                if result:
-                    await _append_to_cache(cache_path, result, batch[i])
+                except OSError:
+                    pass
 
-            # Update meta periodically
-            current_cached = await _get_cached_size(cache_path)
-            await _save_meta(channel_id, msg_id, file_size, current_cached)
+            # Check age (TTL)
+            mtime = os.path.getmtime(fpath)
+            if (now - mtime) > max_age_seconds:
+                try:
+                    os.remove(fpath)
+                    continue
+                except OSError:
+                    pass
 
-            # Yield control to avoid starving the event loop
-            await asyncio.sleep(0.01)
+            all_files.append((fpath, os.path.getsize(fpath), mtime))
 
-        final_cached = await _get_cached_size(cache_path)
-        await _save_meta(channel_id, msg_id, file_size, final_cached)
-        print(f"[prefetch] Completed {channel_id}/{msg_id}: {final_cached}/{file_size} bytes cached")
-
-    except asyncio.CancelledError:
-        print(f"[prefetch] Cancelled for {task_key}")
+        # Check total size against cap
+        total_size = sum(f[1] for f in all_files)
+        if total_size > max_size_bytes:
+            # Sort oldest first (LRU)
+            all_files.sort(key=lambda x: x[2])
+            target_size = max_size_bytes // 2  # shrink to 50% of limit
+            
+            for fpath, fsize, _ in all_files:
+                try:
+                    os.remove(fpath)
+                    total_size -= fsize
+                    if total_size <= target_size:
+                        break
+                except OSError:
+                    pass
     except Exception as e:
-        print(f"[prefetch] Error for {task_key}: {e}")
-    finally:
-        async with _prefetch_lock:
-            _prefetch_tasks.pop(task_key, None)
-
-
-async def _ensure_prefetch(phone: str, channel_id: int, msg_id: int, file_size: int, quality: str):
-    """Start a background pre-fetch if not already running."""
-    task_key = f"{channel_id}_{msg_id}"
-    async with _prefetch_lock:
-        if task_key in _prefetch_tasks:
-            task = _prefetch_tasks[task_key]
-            if not task.done():
-                return  # Already running
-        task = asyncio.create_task(
-            _prefetch_full_file(phone, channel_id, msg_id, file_size, quality)
-        )
-        _prefetch_tasks[task_key] = task
+        print(f"[cache_cleaner] Error: {e}")
 
 
 # ─── Course CRUD ──────────────────────────────────────────────────────────────
@@ -315,7 +203,7 @@ async def sync_course(request: CourseSyncRequest):
         )
         course_data = {"channel_id": request.channel_id, "title": channel_name, "modules": modules}
 
-        async for session in get_db_session():
+        async with get_db_session() as session:
             result = await session.execute(select(Course).filter_by(channel_id=request.channel_id))
             course = result.scalars().first()
             if course:
@@ -333,7 +221,6 @@ async def sync_course(request: CourseSyncRequest):
             # Retrieve the newly generated ID
             await session.refresh(course)
             course_data["_id"] = str(course.id)
-            break
             
         return {"success": True, "course": course_data}
     except Exception as e:
@@ -343,7 +230,7 @@ async def sync_course(request: CourseSyncRequest):
 
 @router.get("/")
 async def get_courses():
-    async for session in get_db_session():
+    async with get_db_session() as session:
         result = await session.execute(select(Course))
         courses = []
         for row in result.scalars().all():
@@ -356,7 +243,7 @@ async def get_courses():
 
 @router.get("/{course_id}")
 async def get_course(course_id: str):
-    async for session in get_db_session():
+    async with get_db_session() as session:
         result = await session.execute(select(Course).filter_by(id=int(course_id)))
         row = result.scalars().first()
         if row and row.data:
@@ -368,7 +255,7 @@ async def get_course(course_id: str):
 
 @router.delete("/{course_id}")
 async def delete_course(course_id: str):
-    async for session in get_db_session():
+    async with get_db_session() as session:
         result = await session.execute(select(Course).filter_by(id=int(course_id)))
         course = result.scalars().first()
         if course:
@@ -377,7 +264,7 @@ async def delete_course(course_id: str):
         return {"success": True}
 
 
-# ─── Thumbnail ────────────────────────────────────────────────────────────────
+# ─── Thumbnail (Client Browser Cached + Auto-Cleaned Server Cache) ───────────
 @router.get("/thumbnail/{phone}/{channel_id}/{msg_id}")
 async def get_thumbnail(phone: str, channel_id: int, msg_id: int):
     cache_path = os.path.join(CACHE_DIR, f"thumb_{channel_id}_{msg_id}.jpg")
@@ -388,34 +275,24 @@ async def get_thumbnail(phone: str, channel_id: int, msg_id: int):
         if not msg or not msg.media:
             raise HTTPException(status_code=404, detail="Thumbnail not found")
         try:
+            _clean_cache_directory(max_size_mb=10, max_age_hours=24)
             await client.download_media(msg.media, file=cache_path, thumb=-1)
         except Exception:
             raise HTTPException(status_code=404, detail="No thumbnail available")
+
     if os.path.exists(cache_path):
-        def _send():
-            with open(cache_path, "rb") as f:
-                yield f.read()
-        return StreamingResponse(_send(), media_type="image/jpeg")
+        return FileResponse(
+            path=cache_path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=2592000, immutable"}
+        )
     raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
-# ─── Stream info (for frontend buffer display) ───────────────────────────────
+# ─── Stream info ─────────────────────────────────────────────────────────────
 @router.get("/stream-info/{phone}/{channel_id}/{msg_id}")
 async def stream_info(phone: str, channel_id: int, msg_id: int):
-    """Returns file size and how much is cached locally."""
-    cache_path = _cache_path_for(channel_id, msg_id)
-    meta = await _load_meta(channel_id, msg_id)
-    cached_bytes = await _get_cached_size(cache_path)
-
-    if meta:
-        return {
-            "file_size": meta["file_size"],
-            "cached_bytes": cached_bytes,
-            "cached_pct": round(cached_bytes / meta["file_size"] * 100, 1) if meta["file_size"] > 0 else 0,
-            "fully_cached": cached_bytes >= meta["file_size"],
-        }
-
-    # No meta yet — need to resolve from Telegram
+    """Returns file size for video player."""
     try:
         clean_phone = normalize_phone(phone)
         client = await get_client(clean_phone)
@@ -424,9 +301,9 @@ async def stream_info(phone: str, channel_id: int, msg_id: int):
             file_size = msg.media.document.size
             return {
                 "file_size": file_size,
-                "cached_bytes": cached_bytes,
-                "cached_pct": round(cached_bytes / file_size * 100, 1) if file_size > 0 else 0,
-                "fully_cached": cached_bytes >= file_size,
+                "cached_bytes": file_size,
+                "cached_pct": 100,
+                "fully_cached": True,
             }
     except Exception:
         pass
@@ -435,7 +312,7 @@ async def stream_info(phone: str, channel_id: int, msg_id: int):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VIDEO STREAMING  —  Sequential direct streaming with automatic disk cache
+# VIDEO STREAMING  —  Zero-Disk On-The-Fly Passthrough with Client Browser Cache
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/stream/{phone}/{channel_id}/{msg_id}")
 async def stream_video(
@@ -445,45 +322,6 @@ async def stream_video(
     request: Request,
     quality: str = "medium",
 ):
-    cache_path = _cache_path_for(channel_id, msg_id)
-
-    # ── FAST PATH: full file cached on disk ───────────────────────────────────
-    if os.path.exists(cache_path):
-        meta = await _load_meta(channel_id, msg_id)
-        cached_size = await _get_cached_size(cache_path)
-
-        if meta and cached_size >= meta.get("file_size", 1):
-            file_size = meta["file_size"]
-            start, end, code = parse_range_header(request.headers.get("Range", ""), file_size)
-            clen = end - start + 1
-            etag = _etag_for(channel_id, msg_id, file_size)
-
-            if_none_match = request.headers.get("If-None-Match", "")
-            if if_none_match == f'"{etag}"':
-                return StreamingResponse(iter([]), status_code=304, headers={"ETag": f'"{etag}"'})
-
-            async def disk_stream():
-                async with aiofiles.open(cache_path, "rb") as f:
-                    await f.seek(start)
-                    rem = clen
-                    while rem > 0:
-                        chunk = await f.read(min(STREAM_YIELD_SIZE, rem))
-                        if not chunk:
-                            break
-                        rem -= len(chunk)
-                        yield chunk
-
-            return StreamingResponse(disk_stream(), status_code=code, headers={
-                "Content-Range":       f"bytes {start}-{end}/{file_size}",
-                "Accept-Ranges":       "bytes",
-                "Content-Length":      str(clen),
-                "Content-Type":        "video/mp4",
-                "Content-Disposition": "inline",
-                "ETag":                f'"{etag}"',
-                "Cache-Control":       "private, max-age=86400",
-            })
-
-    # ── Resolve Telegram media ────────────────────────────────────────────────
     try:
         clean_phone = normalize_phone(phone)
         client = await get_client(clean_phone)
@@ -498,53 +336,31 @@ async def stream_video(
     file_size = doc.size
     mime_type = getattr(doc, "mime_type", None) or "video/mp4"
 
-    await _save_meta(channel_id, msg_id, file_size, 0)
-
     start, end, code = parse_range_header(request.headers.get("Range", ""), file_size)
     clen = end - start + 1
     etag = _etag_for(channel_id, msg_id, file_size)
 
-    # ── Direct Sequential Live Streaming from Telegram + Progressive Caching ──
-    chunk_request_size = 256 * 1024  # 256 KB chunks for low-latency streaming
+    # Check ETag / If-None-Match for browser device cache
+    if_none_match = request.headers.get("If-None-Match", "")
+    if if_none_match == f'"{etag}"':
+        return StreamingResponse(iter([]), status_code=304, headers={"ETag": f'"{etag}"'})
 
-    async def telegram_live_stream():
-        current_offset = start
+    chunk_request_size = 256 * 1024  # 256 KB piece size for responsive playback
+
+    async def telegram_passthrough_stream():
         remaining = clen
         try:
             async for piece in client.iter_download(doc, offset=start, request_size=chunk_request_size):
                 if remaining <= 0:
                     break
-                
-                # Truncate piece if it exceeds requested range
                 if len(piece) > remaining:
                     piece = piece[:remaining]
-
-                # Progressively write to disk cache
-                try:
-                    await _append_to_cache(cache_path, piece, current_offset)
-                except Exception:
-                    pass
-
-                current_offset += len(piece)
                 remaining -= len(piece)
                 yield piece
-
-            # Update cache metadata
-            try:
-                new_cached_size = await _get_cached_size(cache_path)
-                await _save_meta(channel_id, msg_id, file_size, new_cached_size)
-            except Exception:
-                pass
-
         except (asyncio.CancelledError, GeneratorExit):
-            # Client disconnected / seeked away — update cache and exit cleanly
-            try:
-                new_cached_size = await _get_cached_size(cache_path)
-                await _save_meta(channel_id, msg_id, file_size, new_cached_size)
-            except Exception:
-                pass
+            pass
         except Exception as e:
-            print(f"[stream] Error during live streaming {channel_id}/{msg_id}: {e}")
+            print(f"[stream] Error during live stream {channel_id}/{msg_id}: {e}")
 
     headers = {
         "Content-Range":       f"bytes {start}-{end}/{file_size}",
@@ -552,20 +368,19 @@ async def stream_video(
         "Content-Type":        mime_type,
         "Content-Disposition": "inline",
         "ETag":                f'"{etag}"',
-        "Cache-Control":       "no-cache",
+        "Cache-Control":       "private, max-age=604800",  # Cache on user's device for 7 days
     }
-    # Only set Content-Length for exact byte ranges
     if clen > 0:
         headers["Content-Length"] = str(clen)
 
     return StreamingResponse(
-        telegram_live_stream(),
+        telegram_passthrough_stream(),
         status_code=code,
         headers=headers
     )
 
 
-# ─── Download (Instant Full File Streaming & Complete Cache) ────────────────
+# ─── Download (Zero-Disk Full File Stream Directly to Client Device) ──────────
 @router.get("/download/{phone}/{channel_id}/{msg_id}")
 async def download_file(phone: str, channel_id: int, msg_id: int):
     try:
@@ -587,29 +402,17 @@ async def download_file(phone: str, channel_id: int, msg_id: int):
         elif hasattr(msg.media, "size"):
             doc_size = msg.media.size
 
-        # Check if local cache has the 100% COMPLETE file (must equal or exceed full doc_size)
-        mp4_cache = _cache_path_for(channel_id, msg_id)
-        if os.path.exists(mp4_cache) and doc_size > 0:
-            cached_size = await _get_cached_size(mp4_cache)
-            if cached_size >= doc_size:
-                return FileResponse(
-                    path=mp4_cache,
-                    filename=file_name,
-                    media_type="application/octet-stream"
-                )
-
-        # Stream full file from byte 0 directly to the client's browser download tray
         safe_filename = urllib.parse.quote(file_name)
 
-        async def full_download_stream():
+        async def direct_client_download_stream():
             try:
-                # Always start download from offset 0 to ensure the entire file is received
+                # Stream entire file from byte 0 directly to client's download manager
                 async for chunk in client.iter_download(media_obj, offset=0, request_size=512 * 1024):
                     yield chunk
             except (asyncio.CancelledError, GeneratorExit):
                 pass
             except Exception as e:
-                print(f"[download] Full stream error: {e}")
+                print(f"[download] Direct stream error: {e}")
 
         headers = {
             "Content-Disposition": f'attachment; filename="{file_name}"; filename*=UTF-8\'\'{safe_filename}',
@@ -620,7 +423,7 @@ async def download_file(phone: str, channel_id: int, msg_id: int):
             headers["Content-Length"] = str(doc_size)
 
         return StreamingResponse(
-            full_download_stream(),
+            direct_client_download_stream(),
             media_type="application/octet-stream",
             headers=headers
         )

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api from '../api';
+import api, { API_BASE } from '../api';
 import useCache, { invalidateCache } from '../hooks/useCache';
 import { 
   Bookmark, 
@@ -380,7 +380,7 @@ export default function VideoPlayer() {
     setDownloadToast(`Starting download: "${lessonName}" (${sizeText})... Check your browser's download manager.`);
     setTimeout(() => setDownloadToast(null), 6000);
 
-    const url = `http://localhost:8000/api/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
+    const url = `${API_BASE}/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
     
     // Non-scrolling background download trigger
     const iframe = document.createElement('iframe');
@@ -409,7 +409,7 @@ export default function VideoPlayer() {
     setDownloadToast(`Starting download: "${noteName}" (${sizeText})... Check your browser's download manager.`);
     setTimeout(() => setDownloadToast(null), 6000);
 
-    const url = `http://localhost:8000/api/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${note.id}`;
+    const url = `${API_BASE}/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${note.id}`;
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = url;
@@ -468,13 +468,17 @@ export default function VideoPlayer() {
   
   const isBookmarked = bookmarks.includes(currentLessonIdNum);
 
-  const allLessonsInCourse = course.modules?.flatMap((m: any) => m.lessons || []) || [];
-  const totalLessonsCount = allLessonsInCourse.length;
-  const completedLessonsCount = progressSummary?.completed_videos || progressList.filter((p: any) => p.is_completed).length;
-  const completionPercentage = totalLessonsCount > 0 ? Math.round((completedLessonsCount / totalLessonsCount) * 100) : 0;
+  const moduleLessons = activeModule.lessons || [];
+  const totalModuleLessonsCount = moduleLessons.length;
+  const completedModuleLessonsCount = moduleLessons.filter((lesson: any) =>
+    progressList.some((p: any) => p.lesson_id === lesson.id && p.is_completed)
+  ).length;
+  const moduleCompletionPercentage = totalModuleLessonsCount > 0
+    ? Math.round((completedModuleLessonsCount / totalModuleLessonsCount) * 100)
+    : 0;
 
-  const streamUrl = `http://localhost:8000/api/courses/stream/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}?quality=${bufferSpeed}`;
-  const posterUrl = `http://localhost:8000/api/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
+  const streamUrl = `${API_BASE}/courses/stream/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}?quality=${bufferSpeed}`;
+  const posterUrl = `${API_BASE}/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = buffered * 100;
@@ -483,16 +487,18 @@ export default function VideoPlayer() {
   const renderPlaylistItems = () => (
     <div className="flex flex-col h-full space-y-3">
       
-      {/* ── COURSE PROGRESS AT THE TOP ────────────────────────────────────── */}
+      {/* ── SUB-MODULE PROGRESS AT THE TOP ─────────────────────────────────── */}
       <div className="p-3 bg-blue-50/60 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300 space-y-1.5 shrink-0">
         <div className="flex justify-between items-center font-bold text-xs">
-          <span>Course Progress</span>
-          <span className="text-blue-600 dark:text-blue-400">{completedLessonsCount} / {totalLessonsCount} ({completionPercentage}%)</span>
+          <span className="truncate pr-2">Module Progress</span>
+          <span className="text-blue-600 dark:text-blue-400 shrink-0">
+            {completedModuleLessonsCount} / {totalModuleLessonsCount} ({moduleCompletionPercentage}%)
+          </span>
         </div>
         <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
           <div
-            className="bg-blue-600 h-full rounded-full transition-all duration-300"
-            style={{ width: `${completionPercentage}%` }}
+            className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
+            style={{ width: `${moduleCompletionPercentage}%` }}
           />
         </div>
       </div>
@@ -637,7 +643,7 @@ export default function VideoPlayer() {
             <span className="truncate max-w-[200px]">{course.title}</span>
           </button>
           <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
-            {completedLessonsCount}/{totalLessonsCount} Done
+            {completedModuleLessonsCount}/{totalModuleLessonsCount} Done
           </span>
         </div>
 

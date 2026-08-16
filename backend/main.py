@@ -1,8 +1,10 @@
 import os
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import auth, courses, progress, dashboard
 from database import init_db, engine
+from routes.courses import _clean_cache_directory
 
 app = FastAPI(title="TeleLearn API")
 
@@ -14,9 +16,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def _periodic_cache_cleanup():
+    """Background loop: automatically purges expired/excess server cache every hour."""
+    while True:
+        try:
+            _clean_cache_directory(max_size_mb=10, max_age_hours=24)
+        except Exception as e:
+            print(f"[cache_cleanup_task] {e}")
+        await asyncio.sleep(3600)  # Every 1 hour
+
 @app.on_event("startup")
 async def startup_db_client():
     await init_db()
+    _clean_cache_directory(max_size_mb=10, max_age_hours=24)
+    asyncio.create_task(_periodic_cache_cleanup())
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
