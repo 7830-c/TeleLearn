@@ -9,6 +9,7 @@ export default function BookmarksView() {
   const phone = localStorage.getItem('phone') || '';
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [localBookmarks, setLocalBookmarks] = useState<any[]>([]);
 
   const { data: bookmarksData, isLoading, refresh } = useCache<{ bookmarks: any[] }>(
     phone ? `/progress/bookmarks/${encodeURIComponent(phone)}` : null,
@@ -20,7 +21,13 @@ export default function BookmarksView() {
     { ttl: 15 * 60 * 1000 }
   );
 
-  const bookmarks = bookmarksData?.bookmarks || [];
+  // Sync with incoming server/cache data
+  React.useEffect(() => {
+    if (bookmarksData?.bookmarks) {
+      setLocalBookmarks(bookmarksData.bookmarks);
+    }
+  }, [bookmarksData]);
+
   const courses = coursesData?.courses || [];
 
   const handleManualRefresh = async () => {
@@ -66,15 +73,23 @@ export default function BookmarksView() {
     }
   };
 
+  // Instant 0ms Optimistic Removal
   const handleRemoveBookmark = async (e: React.MouseEvent, lessonId: number, title: string) => {
     e.stopPropagation();
+    
+    // 1. Instantly vanish from screen in 0 milliseconds
+    const previousList = localBookmarks;
+    setLocalBookmarks(prev => prev.filter(b => b.lesson_id !== lessonId));
+
+    // 2. Perform background cloud deletion and invalidate cache
     try {
       await api.post('/progress/bookmark', { phone, lesson_id: lessonId, title });
       invalidateCache('/progress/bookmarks');
       invalidateCache('/dashboard');
-      await refresh();
     } catch (err) {
       console.error('Failed to remove bookmark:', err);
+      // Restore on network error
+      setLocalBookmarks(previousList);
     }
   };
 
@@ -97,7 +112,7 @@ export default function BookmarksView() {
               <BookmarkIcon className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600 dark:text-blue-400" />
               <span>Saved Bookmarks</span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                {bookmarks.length}
+                {localBookmarks.length}
               </span>
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
@@ -118,13 +133,13 @@ export default function BookmarksView() {
       </div>
 
       {/* Bookmarks Grid */}
-      {isLoading && !bookmarksData ? (
+      {isLoading && !bookmarksData && localBookmarks.length === 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="h-40 rounded-2xl skeleton" />
           ))}
         </div>
-      ) : bookmarks.length === 0 ? (
+      ) : localBookmarks.length === 0 ? (
         <div className="bg-white dark:bg-[#131d31] rounded-2xl p-8 sm:p-10 text-center space-y-3 border border-slate-300 dark:border-slate-800">
           <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
             <BookmarkIcon className="w-6 h-6" />
@@ -147,7 +162,7 @@ export default function BookmarksView() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-          {bookmarks.map((b: any) => (
+          {localBookmarks.map((b: any) => (
             <div
               key={b._id || b.id}
               onClick={() => handlePlayBookmark(b)}
