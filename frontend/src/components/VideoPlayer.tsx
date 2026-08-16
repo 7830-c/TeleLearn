@@ -2,26 +2,26 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { API_BASE } from '../api';
 import useCache, { invalidateCache } from '../hooks/useCache';
-import { 
-  Bookmark, 
-  BookmarkCheck, 
-  Play, 
-  Pause, 
-  FileText, 
-  Download, 
-  ChevronDown, 
-  Gauge, 
-  Layers, 
-  ArrowLeft, 
-  Maximize, 
-  Minimize, 
-  Zap, 
-  Volume2, 
-  VolumeX, 
-  SkipForward, 
-  SkipBack, 
-  CheckCircle2, 
-  Check 
+import {
+  Bookmark,
+  BookmarkCheck,
+  Play,
+  Pause,
+  FileText,
+  Download,
+  ChevronDown,
+  Gauge,
+  Layers,
+  ArrowLeft,
+  Maximize,
+  Minimize,
+  Zap,
+  Volume2,
+  VolumeX,
+  SkipForward,
+  SkipBack,
+  CheckCircle2,
+  Check
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -80,6 +80,8 @@ export default function VideoPlayer() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prefetchVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
@@ -137,11 +139,11 @@ export default function VideoPlayer() {
   const handleCanPlay = useCallback(() => {
     setIsBuffering(false);
     if (autoPlayRef.current && videoRef.current) {
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().catch(() => { });
       setIsPlaying(true);
     }
     if (isSeeking.current && wasPlayingBeforeSeek.current && videoRef.current) {
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().catch(() => { });
       setIsPlaying(true);
       isSeeking.current = false;
       wasPlayingBeforeSeek.current = false;
@@ -199,6 +201,18 @@ export default function VideoPlayer() {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handler);
     return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Initialize background prefetch video for instant seeking
+  useEffect(() => {
+    const v = document.createElement('video');
+    v.preload = 'auto';
+    v.muted = true;
+    prefetchVideoRef.current = v;
+    return () => {
+      if (prefetchTimeoutRef.current) clearTimeout(prefetchTimeoutRef.current);
+      prefetchVideoRef.current = null;
+    };
   }, []);
 
   const resetControlsTimer = useCallback(() => {
@@ -266,7 +280,7 @@ export default function VideoPlayer() {
   const handleSeeked = () => {
     setIsBuffering(false);
     if (wasPlayingBeforeSeek.current && videoRef.current) {
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().catch(() => { });
       setIsPlaying(true);
     }
     isSeeking.current = false;
@@ -277,7 +291,7 @@ export default function VideoPlayer() {
   const togglePlayPause = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    
+
     if (isPlaying) {
       // Pause immediately
       autoPlayRef.current = false;
@@ -287,7 +301,7 @@ export default function VideoPlayer() {
     } else {
       // Play
       autoPlayRef.current = true;
-      v.play().catch(() => {});
+      v.play().catch(() => { });
       setIsPlaying(true);
     }
     resetControlsTimer();
@@ -301,6 +315,29 @@ export default function VideoPlayer() {
     const t = (parseFloat(e.target.value) / 100) * v.duration;
     v.currentTime = t;
     setCurrentTime(t);
+  };
+
+  const handleScrubberMouseMove = (e: React.MouseEvent<HTMLInputElement>) => {
+    if (!duration || duration <= 0 || !streamUrl) return;
+
+    // Calculate hover percentage
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    const targetTime = Math.max(0, Math.min(1, pct)) * duration;
+
+    // Debounce the prefetch to avoid spamming the network while moving mouse fast
+    if (prefetchTimeoutRef.current) clearTimeout(prefetchTimeoutRef.current);
+    prefetchTimeoutRef.current = setTimeout(() => {
+      const pVideo = prefetchVideoRef.current;
+      if (pVideo) {
+        // If src isn't set yet, set it
+        if (!pVideo.src || pVideo.src !== streamUrl) {
+          pVideo.src = streamUrl;
+        }
+        // Seeking the hidden video triggers the browser to cache that byte range!
+        pVideo.currentTime = targetTime;
+      }
+    }, 150);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -352,7 +389,7 @@ export default function VideoPlayer() {
   const toggleBookmark = async (id: number, title: string) => {
     // 1. Optimistic instant UI update on single click
     const willBookmark = !localBookmarks.includes(id);
-    setLocalBookmarks(prev => 
+    setLocalBookmarks(prev =>
       willBookmark ? [...prev, id] : prev.filter(bId => bId !== id)
     );
 
@@ -362,14 +399,14 @@ export default function VideoPlayer() {
       invalidateCache('/dashboard');
       if (res.data && typeof res.data.bookmarked === 'boolean') {
         const isServerBookmarked = res.data.bookmarked;
-        setLocalBookmarks(prev => 
+        setLocalBookmarks(prev =>
           isServerBookmarked ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter(bId => bId !== id)
         );
       }
     } catch (err) {
       console.error('Error toggling bookmark:', err);
       // Revert on error
-      setLocalBookmarks(prev => 
+      setLocalBookmarks(prev =>
         willBookmark ? prev.filter(bId => bId !== id) : [...prev, id]
       );
     }
@@ -382,7 +419,7 @@ export default function VideoPlayer() {
       e.stopPropagation();
     }
     if (!course) return;
-    
+
     // Compute file size display
     let sizeText = 'Full Video';
     if (currentLesson?.size) {
@@ -397,21 +434,21 @@ export default function VideoPlayer() {
     const proceed = window.confirm(
       `Download "${lessonName}"?\n\nFile Size: ${sizeText}\n\nDo you want to download this video for offline playback?`
     );
-    
+
     if (!proceed) return;
 
     setDownloadToast(`Starting download: "${lessonName}" (${sizeText})... Check your browser's download manager.`);
     setTimeout(() => setDownloadToast(null), 6000);
 
     const url = `${API_BASE}/courses/download/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
-    
+
     // Non-scrolling background download trigger
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = url;
     document.body.appendChild(iframe);
     setTimeout(() => {
-      try { document.body.removeChild(iframe); } catch {}
+      try { document.body.removeChild(iframe); } catch { }
     }, 60000);
   };
 
@@ -423,7 +460,7 @@ export default function VideoPlayer() {
     if (!course) return;
     const noteName = note.file_name || note.text || 'Study Document';
     let sizeText = note.size ? `${(note.size / 1024 / 1024).toFixed(1)} MB` : 'PDF Document';
-    
+
     const proceed = window.confirm(
       `Download "${noteName}"?\n\nFile Size: ${sizeText}\n\nDo you want to download this study note?`
     );
@@ -438,7 +475,7 @@ export default function VideoPlayer() {
     iframe.src = url;
     document.body.appendChild(iframe);
     setTimeout(() => {
-      try { document.body.removeChild(iframe); } catch {}
+      try { document.body.removeChild(iframe); } catch { }
     }, 60000);
   };
 
@@ -484,11 +521,11 @@ export default function VideoPlayer() {
   const activeModule =
     course.modules?.find((m: any) => m.id === selectedModuleId) ||
     course.modules?.[0] || { lessons: [], notes: [], title: 'Module' };
-  
+
   const currentLesson = course.modules
     ?.flatMap((m: any) => m.lessons || [])
     .find((l: any) => l.id === currentLessonIdNum);
-  
+
   const isBookmarked = bookmarks.includes(currentLessonIdNum);
 
   const moduleLessons = activeModule.lessons || [];
@@ -509,7 +546,7 @@ export default function VideoPlayer() {
   // Reusable Playlist & Progress Section (Progress is placed AT THE TOP above Sub-Module selector!)
   const renderPlaylistItems = () => (
     <div className="flex flex-col h-full space-y-3">
-      
+
       {/* ── SUB-MODULE PROGRESS AT THE TOP ─────────────────────────────────── */}
       <div className="p-3 bg-blue-50/60 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300 space-y-1.5 shrink-0">
         <div className="flex justify-between items-center font-bold text-xs">
@@ -539,7 +576,7 @@ export default function VideoPlayer() {
           <span className="truncate">{activeModule.title}</span>
           <ChevronDown className={clsx('w-3.5 h-3.5 text-slate-400 transition-transform', isModuleDropdownOpen && 'rotate-180')} />
         </button>
-        
+
         {isModuleDropdownOpen && (
           <div className="absolute top-full left-2.5 right-2.5 sm:left-3 sm:right-3 mt-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
             {course.modules?.map((mod: any) => (
@@ -625,7 +662,7 @@ export default function VideoPlayer() {
 
   return (
     <div className="flex flex-col lg:flex-row h-full w-full bg-slate-100 dark:bg-[#0b1120] text-slate-900 dark:text-slate-100 overflow-hidden font-sans transition-colors relative">
-      
+
       {/* Download Alert Toast */}
       {downloadToast && (
         <div className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-50 bg-slate-900 dark:bg-blue-600 text-white px-4 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2.5 text-xs font-semibold max-w-sm">
@@ -651,11 +688,11 @@ export default function VideoPlayer() {
       </aside>
 
       {/* ── MAIN CONTENT AREA (Scrolls naturally & smoothly, auto-scrolls to top on video change) ── */}
-      <main 
+      <main
         ref={scrollAreaRef}
         className="flex-1 flex flex-col h-full overflow-y-auto bg-slate-100 dark:bg-[#0b1120]"
       >
-        
+
         {/* Mobile Top Navigation Header */}
         <div className="flex lg:hidden items-center justify-between px-4 py-2.5 bg-white dark:bg-[#131d31] border-b border-slate-300 dark:border-slate-800 shrink-0 z-20">
           <button
@@ -672,7 +709,7 @@ export default function VideoPlayer() {
 
         {/* Unified Scrollable Container */}
         <div className="p-3 sm:p-6 lg:p-8 max-w-5xl mx-auto w-full space-y-4 sm:space-y-6 pb-36">
-          
+
           {/* ── CURVED VIDEO PLAYER FRAME (Elegant rounded curves & clean borders) ── */}
           <div
             ref={containerRef}
@@ -730,7 +767,7 @@ export default function VideoPlayer() {
               <div className="h-20 bg-gradient-to-t from-black/95 via-black/60 to-transparent absolute bottom-0 left-0 right-0 pointer-events-none" />
 
               <div className="relative px-3 sm:px-4 pb-2.5 sm:pb-3.5 pt-4 space-y-1.5 sm:space-y-2">
-                
+
                 {/* Scrub Bar */}
                 <div className="relative h-2 group/seek flex items-center">
                   <input
@@ -740,6 +777,7 @@ export default function VideoPlayer() {
                     step={0.01}
                     value={progressPct}
                     onChange={handleSeek}
+                    onMouseMove={handleScrubberMouseMove}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     title="Seek"
                   />
@@ -760,7 +798,7 @@ export default function VideoPlayer() {
 
                 {/* Controls Row */}
                 <div className="flex items-center justify-between text-white gap-2">
-                  
+
                   {/* Left: Play, Skips, Time */}
                   <div className="flex items-center gap-1 sm:gap-2">
                     <button
@@ -770,7 +808,7 @@ export default function VideoPlayer() {
                     >
                       <SkipBack className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
-                    
+
                     <button
                       onClick={togglePlayPause}
                       className="w-7 h-7 sm:w-9 sm:h-9 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center transition-colors shadow-sm"
@@ -784,7 +822,7 @@ export default function VideoPlayer() {
                         <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current ml-0.5" />
                       )}
                     </button>
-                    
+
                     <button
                       onClick={() => skipSeconds(10)}
                       className="p-1 sm:p-1.5 rounded-lg hover:bg-white/20 transition-colors"
@@ -792,7 +830,7 @@ export default function VideoPlayer() {
                     >
                       <SkipForward className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
-                    
+
                     {/* Volume Slider on Desktop */}
                     <div className="hidden md:flex items-center gap-1">
                       <button onClick={toggleMute} className="p-1 rounded-lg hover:bg-white/20">
@@ -870,7 +908,7 @@ export default function VideoPlayer() {
               <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white leading-snug">
                 {currentLesson?.file_name || currentLesson?.text || `Lesson ${lessonId}`}
               </h1>
-              
+
               <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                 Telegram Media • {currentLesson?.date ? new Date(currentLesson.date).toLocaleDateString() : 'Active Lecture'} • {duration > 0 ? formatTime(duration) : 'Video'}
               </p>
@@ -878,7 +916,7 @@ export default function VideoPlayer() {
 
             {/* 3 Buttons in a Single Crisp Horizontal Row */}
             <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-              
+
               {/* Button 1: Mark Complete */}
               <button
                 onClick={handleToggleComplete}
