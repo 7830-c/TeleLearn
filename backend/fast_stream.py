@@ -39,13 +39,20 @@ async def get_persistent_pool(client: TelegramClient, phone: str, dc_id: int, wo
     async with _POOL_LOCK:
         if key not in _POOL:
             print(f"[FastStream] Creating persistent connection pool for DC {dc_id} with {workers} workers")
-            export = await client(ExportAuthorizationRequest(dc_id))
             dc = await client._get_dc(dc_id)
+            is_same_dc = (dc_id == client.session.dc_id)
+            
+            export = None
+            if not is_same_dc:
+                export = await client(ExportAuthorizationRequest(dc_id))
             
             senders = []
             for _ in range(workers):
-                # Using None for auth_key so MTProtoSender generates a fresh one
-                sender = MTProtoSender(None, loggers=client._log)
+                # If same DC, we reuse the existing auth_key.
+                # MTProtoSender creates a unique random session_id for this connection automatically!
+                auth_key = client.session.auth_key if is_same_dc else None
+                sender = MTProtoSender(auth_key, loggers=client._log)
+                
                 conn = client._connection(
                     dc.ip_address, 
                     dc.port, 
@@ -54,7 +61,10 @@ async def get_persistent_pool(client: TelegramClient, phone: str, dc_id: int, wo
                     proxy=client._proxy
                 )
                 await sender.connect(conn)
-                await sender.send(ImportAuthorizationRequest(id=export.id, bytes=export.bytes))
+                
+                if not is_same_dc and export:
+                    await sender.send(ImportAuthorizationRequest(id=export.id, bytes=export.bytes))
+                    
                 senders.append(sender)
                 
             _POOL[key] = SenderPool(senders)
