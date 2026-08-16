@@ -1,0 +1,15 @@
+name: Keep Render Backend Awake
+
+on:
+  schedule:
+    # Ping every 12 minutes so Render free tier never goes to sleep (spins down after 15m inactivity)
+    - cron: '*/12 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  keep_alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Backend Health Endpoint
+        run: |
+          curl -f -sS "https://telelearn-backend.onrender.com/health" || echo "Ping attempted"
