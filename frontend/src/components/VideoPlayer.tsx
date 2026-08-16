@@ -50,7 +50,7 @@ export default function VideoPlayer() {
     { ttl: 15 * 60 * 1000 }
   );
 
-  const { data: bookmarksData, refresh: refreshBookmarks } = useCache<{ bookmarks: any[] }>(
+  const { data: bookmarksData } = useCache<{ bookmarks: any[] }>(
     phone ? `/progress/bookmarks/${encodeURIComponent(phone)}` : null,
     { ttl: 2 * 60 * 1000 }
   );
@@ -60,7 +60,15 @@ export default function VideoPlayer() {
     { ttl: 2 * 60 * 1000 }
   );
 
-  const bookmarks: number[] = (bookmarksData?.bookmarks || []).map((b: any) => b.lesson_id);
+  const [localBookmarks, setLocalBookmarks] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (bookmarksData?.bookmarks) {
+      setLocalBookmarks(bookmarksData.bookmarks.map((b: any) => b.lesson_id));
+    }
+  }, [bookmarksData]);
+
+  const bookmarks: number[] = localBookmarks;
   const progressList: any[] = progressSummary?.progress || [];
 
   const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null);
@@ -342,13 +350,28 @@ export default function VideoPlayer() {
   };
 
   const toggleBookmark = async (id: number, title: string) => {
+    // 1. Optimistic instant UI update on single click
+    const willBookmark = !localBookmarks.includes(id);
+    setLocalBookmarks(prev => 
+      willBookmark ? [...prev, id] : prev.filter(bId => bId !== id)
+    );
+
     try {
-      await api.post('/progress/bookmark', { phone, lesson_id: id, course_id: courseId, title });
+      const res = await api.post('/progress/bookmark', { phone, lesson_id: id, course_id: courseId, title });
       invalidateCache('/progress/bookmarks');
       invalidateCache('/dashboard');
-      await refreshBookmarks();
+      if (res.data && typeof res.data.bookmarked === 'boolean') {
+        const isServerBookmarked = res.data.bookmarked;
+        setLocalBookmarks(prev => 
+          isServerBookmarked ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter(bId => bId !== id)
+        );
+      }
     } catch (err) {
       console.error('Error toggling bookmark:', err);
+      // Revert on error
+      setLocalBookmarks(prev => 
+        willBookmark ? prev.filter(bId => bId !== id) : [...prev, id]
+      );
     }
   };
 

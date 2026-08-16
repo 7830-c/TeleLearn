@@ -1,12 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import useCache, { invalidateCache } from '../hooks/useCache';
-import { Bookmark as BookmarkIcon, PlayCircle, Trash2, ArrowLeft, BookOpen, Play } from 'lucide-react';
+import { Bookmark as BookmarkIcon, PlayCircle, Trash2, ArrowLeft, BookOpen, Play, RefreshCw } from 'lucide-react';
+import clsx from 'clsx';
 
 export default function BookmarksView() {
   const phone = localStorage.getItem('phone') || '';
   const navigate = useNavigate();
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { data: bookmarksData, isLoading, refresh } = useCache<{ bookmarks: any[] }>(
     phone ? `/progress/bookmarks/${encodeURIComponent(phone)}` : null,
@@ -20,6 +22,17 @@ export default function BookmarksView() {
 
   const bookmarks = bookmarksData?.bookmarks || [];
   const courses = coursesData?.courses || [];
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    invalidateCache('/progress/bookmarks');
+    invalidateCache('/dashboard');
+    try {
+      await refresh();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   const handlePlayBookmark = async (b: any) => {
     if (b.course_id) {
@@ -78,7 +91,7 @@ export default function BookmarksView() {
           <span>Back to Dashboard</span>
         </button>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
               <BookmarkIcon className="w-6 h-6 sm:w-7 sm:h-7 text-blue-600 dark:text-blue-400" />
@@ -91,6 +104,16 @@ export default function BookmarksView() {
               Click on any bookmarked lecture to play it instantly.
             </p>
           </div>
+
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/60 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-all shadow-xs cursor-pointer disabled:opacity-60 shrink-0 self-start sm:self-auto"
+            title="Reload latest bookmarks from server"
+          >
+            <RefreshCw className={clsx("w-3.5 h-3.5 text-blue-600 dark:text-blue-400", isRefreshing && "animate-spin")} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+          </button>
         </div>
       </div>
 
