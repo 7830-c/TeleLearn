@@ -363,6 +363,8 @@ async def stream_video(
     doc       = msg.media.document
     file_size = doc.size
     mime_type = getattr(doc, "mime_type", None) or "video/mp4"
+    if mime_type in ["application/octet-stream", "video/x-matroska", "application/x-matroska", "binary/octet-stream"]:
+        mime_type = "video/mp4"
 
     start, end, code = parse_range_header(request.headers.get("Range", ""), file_size)
     clen = end - start + 1
@@ -373,11 +375,18 @@ async def stream_video(
     if if_none_match == f'"{etag}"':
         return StreamingResponse(iter([]), status_code=304, headers={"ETag": f'"{etag}"'})
 
+    workers_map = {
+        "low": 2,      # 2 parallel workers (Low bandwidth / conservative data usage)
+        "medium": 4,   # 4 parallel workers (Balanced responsive playback)
+        "high": 6,     # 6 parallel workers (High throughput / fast pre-buffering)
+    }
+    workers = workers_map.get(quality, 4)
+
     # Use our high-performance parallel streamer with persistent connection pool
     async def fast_telegram_stream():
         from fast_stream import parallel_stream
         try:
-            async for chunk in parallel_stream(client, clean_phone, doc, start, clen, workers=6):
+            async for chunk in parallel_stream(client, clean_phone, doc, start, clen, workers=workers):
                 yield chunk
         except (asyncio.CancelledError, GeneratorExit):
             pass
