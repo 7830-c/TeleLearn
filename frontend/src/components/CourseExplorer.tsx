@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import useCache from '../hooks/useCache';
-import { API_BASE } from '../api';
+import useCache, { invalidateCache } from '../hooks/useCache';
+import api, { API_BASE } from '../api';
 import { 
   ChevronLeft, 
   Folder, 
@@ -10,7 +10,9 @@ import {
   Download, 
   Clock, 
   CheckCircle2, 
-  ChevronRight
+  ChevronRight,
+  Pencil,
+  X
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -31,8 +33,11 @@ export default function CourseExplorer() {
 
   const [activeModule, setActiveModule] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'videos' | 'notes'>('videos');
+  const [editingModule, setEditingModule] = useState<{ id: number; title: string } | null>(null);
+  const [renameInput, setRenameInput] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
 
-  const { data: course, isLoading: isCourseLoading } = useCache<any>(
+  const { data: course, isLoading: isCourseLoading, refresh: refreshCourse } = useCache<any>(
     courseId ? `/courses/${courseId}` : null,
     { ttl: 15 * 60 * 1000 }
   );
@@ -43,6 +48,42 @@ export default function CourseExplorer() {
   );
 
   const progressData: any[] = progressSummary?.progress || [];
+
+  const handleStartRename = (mod: any, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingModule({ id: mod.id, title: mod.title });
+    setRenameInput(mod.title);
+  };
+
+  const handleSaveRename = async () => {
+    if (!editingModule || !renameInput.trim() || !courseId) return;
+    const newTitle = renameInput.trim();
+    setIsRenaming(true);
+    try {
+      // Optimistically update local course data
+      if (course && course.modules) {
+        const targetMod = course.modules.find((m: any) => m.id === editingModule.id);
+        if (targetMod) targetMod.title = newTitle;
+      }
+      if (activeModule && activeModule.id === editingModule.id) {
+        setActiveModule({ ...activeModule, title: newTitle });
+      }
+
+      await api.put(`/courses/${courseId}/modules/${editingModule.id}/rename`, {
+        phone,
+        new_title: newTitle,
+      });
+
+      invalidateCache(`/courses/${courseId}`);
+      invalidateCache('/dashboard');
+      refreshCourse();
+      setEditingModule(null);
+    } catch (err: any) {
+      alert(err?.response?.data?.detail || 'Failed to rename module');
+    } finally {
+      setIsRenaming(false);
+    }
+  };
 
   const handleDownloadNote = (note: any) => {
     if (!course) return;
@@ -111,9 +152,20 @@ export default function CourseExplorer() {
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-              {currentModule ? currentModule.title : course.title}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                {currentModule ? currentModule.title : course.title}
+              </h1>
+              {currentModule && (
+                <button
+                  onClick={() => handleStartRename(currentModule)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                  title="Rename this module"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              )}
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium flex items-center gap-1.5 flex-wrap">
               {currentModule ? (
                 <>
@@ -180,16 +232,25 @@ export default function CourseExplorer() {
                     <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-100 dark:border-blue-900/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
                       <Folder className="w-5 h-5" />
                     </div>
-                    {completionPct > 0 && (
-                      <span className={clsx(
-                        "text-[10px] font-bold px-2 py-0.5 rounded-md",
-                        completionPct === 100 
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
-                          : "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
-                      )}>
-                        {completionPct === 100 ? 'Completed' : `${completionPct}%`}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={(e) => handleStartRename(module, e)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 dark:hover:text-blue-400 transition-colors"
+                        title="Rename Module"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      {completionPct > 0 && (
+                        <span className={clsx(
+                          "text-[10px] font-bold px-2 py-0.5 rounded-md",
+                          completionPct === 100 
+                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            : "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                        )}>
+                          {completionPct === 100 ? 'Completed' : `${completionPct}%`}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <h3 className="font-bold text-sm md:text-base text-slate-900 dark:text-white leading-snug line-clamp-2 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
@@ -369,6 +430,56 @@ export default function CourseExplorer() {
               </div>
             )
           )}
+        </div>
+      )}
+
+      {/* Rename Module Modal */}
+      {editingModule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white dark:bg-[#131d31] rounded-2xl p-5 sm:p-6 max-w-md w-full border border-slate-300 dark:border-slate-800 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">Rename Module</h3>
+              <button
+                onClick={() => setEditingModule(null)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Module Name</label>
+              <input
+                type="text"
+                value={renameInput}
+                onChange={(e) => setRenameInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveRename();
+                  if (e.key === 'Escape') setEditingModule(null);
+                }}
+                autoFocus
+                placeholder="Enter module name"
+                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-900 dark:text-white outline-none focus:border-blue-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                onClick={() => setEditingModule(null)}
+                disabled={isRenaming}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveRename}
+                disabled={isRenaming || !renameInput.trim()}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors cursor-pointer shadow-xs"
+              >
+                {isRenaming ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

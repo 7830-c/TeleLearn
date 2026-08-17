@@ -271,6 +271,51 @@ async def get_course(course_id: str):
     raise HTTPException(status_code=404, detail="Course not found")
 
 
+class RenameModuleRequest(BaseModel):
+    phone: str
+    new_title: str
+
+
+@router.put("/{course_id}/modules/{module_id}/rename")
+async def rename_module(course_id: str, module_id: int, request: RenameModuleRequest):
+    new_title = request.new_title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Module title cannot be empty")
+
+    clean_phone = normalize_phone(request.phone)
+    async with get_db_session() as session:
+        user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+        user = user_res.scalars().first()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        result = await session.execute(
+            select(Course).filter_by(id=int(course_id), user_id=user.id)
+        )
+        course = result.scalars().first()
+        if not course or not course.data:
+            raise HTTPException(status_code=404, detail="Course not found")
+
+        data = json.loads(course.data)
+        updated = False
+        for mod in data.get("modules", []):
+            if mod.get("id") == module_id:
+                mod["title"] = new_title
+                updated = True
+                break
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="Module not found in this course")
+
+        course.data = json.dumps(data)
+        await session.commit()
+        from routes.dashboard import invalidate_dashboard_cache
+        invalidate_dashboard_cache(clean_phone)
+
+        data["_id"] = str(course.id)
+        return {"success": True, "course": data, "new_title": new_title}
+
+
 @router.delete("/{course_id}")
 async def delete_course(course_id: str, phone: str = None):
     async with get_db_session() as session:
