@@ -555,6 +555,14 @@ export default function VideoPlayer() {
     ? Math.round((completedModuleLessonsCount / totalModuleLessonsCount) * 100)
     : 0;
 
+  // Calculate total module video content hours
+  const totalModuleSeconds = moduleLessons.reduce((acc: number, l: any) => acc + (l.duration || 0), 0);
+  const moduleTotalHoursStr = totalModuleSeconds >= 3600
+    ? `${(totalModuleSeconds / 3600).toFixed(1)} hrs`
+    : totalModuleSeconds > 0
+    ? `${Math.round(totalModuleSeconds / 60)} mins`
+    : null;
+
   const streamUrl = `${API_BASE}/courses/stream/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}?quality=${bufferSpeed}`;
   const posterUrl = `${API_BASE}/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
 
@@ -568,7 +576,14 @@ export default function VideoPlayer() {
       {/* ── SUB-MODULE PROGRESS AT THE TOP ─────────────────────────────────── */}
       <div className="p-3 bg-blue-50/60 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/60 text-[11px] text-slate-700 dark:text-slate-300 space-y-1.5 shrink-0">
         <div className="flex justify-between items-center font-bold text-xs">
-          <span className="truncate pr-2">Module Progress</span>
+          <span className="truncate pr-2 flex items-center gap-1.5">
+            <span>Module Progress</span>
+            {moduleTotalHoursStr && (
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/80 text-blue-700 dark:text-blue-300">
+                {moduleTotalHoursStr}
+              </span>
+            )}
+          </span>
           <span className="text-blue-600 dark:text-blue-400 shrink-0">
             {completedModuleLessonsCount} / {totalModuleLessonsCount} ({moduleCompletionPercentage}%)
           </span>

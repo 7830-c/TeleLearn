@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import date, timedelta
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -10,7 +11,7 @@ router = APIRouter()
 
 # High-speed in-memory cache for dashboard
 _dashboard_cache: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL = 30.0  # 30 seconds
+_CACHE_TTL = 15.0  # 15 seconds
 
 def invalidate_dashboard_cache(phone: str = None):
     if phone:
@@ -23,6 +24,32 @@ def invalidate_dashboard_cache(phone: str = None):
 async def _get_user_by_phone(session, phone: str):
     result = await session.execute(select(User).filter_by(phone=phone))
     return result.scalars().first()
+
+
+async def _calculate_streak_days(session, user_id: int) -> int:
+    today = date.today()
+    res = await session.execute(
+        select(StudyLog.date)
+        .filter(StudyLog.user_id == user_id, StudyLog.seconds_studied >= 30)
+        .order_by(StudyLog.date.desc())
+    )
+    studied_dates = set(res.scalars().all())
+    if not studied_dates:
+        return 0
+
+    streak = 0
+    check_date = today
+    if check_date not in studied_dates:
+        # If user hasn't studied today yet, check if studied yesterday (streak still alive)
+        check_date = today - timedelta(days=1)
+        if check_date not in studied_dates:
+            return 0
+
+    while check_date in studied_dates:
+        streak += 1
+        check_date -= timedelta(days=1)
+
+    return streak
 
 
 @router.get("/")
@@ -95,10 +122,11 @@ async def get_dashboard(phone: str, req: Request = None):
         )
         today_seconds = today_res.scalar() or 0
 
+        streak_days = await _calculate_streak_days(session, user.id)
         metrics = {
             "total_hours": round(total_seconds / 3600, 1),
             "hours_today": round(today_seconds / 3600, 1),
-            "streak_days": 1 if today_seconds > 0 else 0,
+            "streak_days": streak_days,
         }
 
         # 3. Continue Watching

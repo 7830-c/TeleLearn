@@ -6,7 +6,7 @@ from sqlalchemy.future import select
 from sqlalchemy import func
 from database import get_db_session, Progress, Bookmark, User, StudyLog, Course
 from telegram_client import normalize_phone
-from routes.dashboard import invalidate_dashboard_cache
+from routes.dashboard import invalidate_dashboard_cache, _calculate_streak_days
 
 router = APIRouter()
 
@@ -242,10 +242,11 @@ async def get_metrics(phone: str):
             today_seconds = today_res.scalar() or 0
             
             # Active Streak
+            streak_days = await _calculate_streak_days(session, user.id)
             return {
                 "total_hours": round(total_seconds / 3600, 1),
                 "hours_today": round(today_seconds / 3600, 1),
-                "streak_days": 1 if today_seconds > 0 else 0
+                "streak_days": streak_days
             }
     except HTTPException:
         raise
