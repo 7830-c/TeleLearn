@@ -92,11 +92,26 @@ async def get_client(phone: str) -> TelegramClient:
         client = TelegramClient(session, API_ID, API_HASH)
         try:
             await client.connect()
+            if session_str and not await client.is_user_authorized():
+                print(f"[telegram_client] Stale un-authorized session for {clean_phone}. Resetting...")
+                await clear_client(clean_phone)
+                session = StringSession("")
+                client = TelegramClient(session, API_ID, API_HASH)
+                await client.connect()
         except Exception as e:
             err_msg = str(e)
-            if "AuthKeyDuplicatedError" in err_msg or "two different IP addresses" in err_msg or "SecurityError" in err_msg or "Key was already used" in err_msg:
-                print(f"[telegram_client] Resetting invalid/conflicted session for {clean_phone} due to: {e}")
-                await save_session_string(clean_phone, "")
+            if any(term in err_msg for term in [
+                "AuthKeyDuplicatedError",
+                "AuthKeyUnregisteredError",
+                "The key is not registered",
+                "two different IP addresses",
+                "SecurityError",
+                "Key was already used",
+                "SessionRevokedError",
+                "UserDeactivatedError"
+            ]):
+                print(f"[telegram_client] Resetting invalid/unregistered session for {clean_phone} due to: {e}")
+                await clear_client(clean_phone)
                 session = StringSession("")
                 client = TelegramClient(session, API_ID, API_HASH)
                 await client.connect()

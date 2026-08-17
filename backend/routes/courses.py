@@ -111,10 +111,31 @@ class CourseSyncRequest(BaseModel):
     channel_id: int
 
 
+async def check_telegram_auth_error(phone: str, e: Exception):
+    err_str = str(e)
+    clean_phone = normalize_phone(phone)
+    if any(term in err_str for term in [
+        "AuthKeyUnregisteredError", 
+        "AuthKeyDuplicatedError", 
+        "The key is not registered", 
+        "two different IP addresses",
+        "SessionRevokedError",
+        "UserDeactivatedError",
+        "unauthorized"
+    ]):
+        from telegram_client import clear_client
+        await clear_client(clean_phone)
+        raise HTTPException(
+            status_code=401, 
+            detail="Telegram session expired or invalid. Please log in again."
+        )
+
+
 @router.get("/channels")
 async def list_channels(phone: str):
+    clean_phone = normalize_phone(phone)
     try:
-        client = await get_client(phone)
+        client = await get_client(clean_phone)
         if not await client.is_user_authorized():
             raise HTTPException(status_code=401, detail="User not authorized")
         dialogs = await client.get_dialogs()
@@ -122,14 +143,17 @@ async def list_channels(phone: str):
             {"id": d.id, "name": d.name, "is_channel": d.is_channel, "is_group": d.is_group}
             for d in dialogs if d.is_channel or d.is_group
         ]}
+    except HTTPException:
+        raise
     except Exception as e:
+        await check_telegram_auth_error(clean_phone, e)
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/sync")
 async def sync_course(request: CourseSyncRequest):
+    clean_phone = normalize_phone(request.phone)
     try:
-        clean_phone = normalize_phone(request.phone)
         client = await get_client(clean_phone)
         if not await client.is_user_authorized():
             raise HTTPException(status_code=401, detail="User not authorized")
@@ -399,12 +423,10 @@ async def stream_video(
         clean_phone = normalize_phone(phone)
         client = await get_client(clean_phone)
         msg    = await client.get_messages(channel_id, ids=msg_id)
+    except HTTPException:
+        raise
     except Exception as e:
-        err_str = str(e)
-        if "AuthKeyDuplicatedError" in err_str or "two different IP addresses" in err_str or "unauthorized" in err_str.lower():
-            from telegram_client import clear_client
-            await clear_client(clean_phone)
-            raise HTTPException(status_code=401, detail="Telegram session expired or used on another IP. Please login again.")
+        await check_telegram_auth_error(phone, e)
         raise HTTPException(status_code=500, detail=f"Telegram error: {e}")
 
     if not msg or not msg.media or not hasattr(msg.media, "document"):
@@ -515,5 +537,6 @@ async def download_file(phone: str, channel_id: int, msg_id: int):
     except HTTPException:
         raise
     except Exception as e:
+        await check_telegram_auth_error(phone, e)
         print(f"[download] Error downloading file {channel_id}/{msg_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Download error: {str(e)}")
