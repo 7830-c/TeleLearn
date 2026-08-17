@@ -2,26 +2,27 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { API_BASE } from '../api';
 import useCache, { invalidateCache } from '../hooks/useCache';
-import {
-  Bookmark,
-  BookmarkCheck,
-  Play,
-  Pause,
-  FileText,
-  Download,
-  ChevronDown,
-  Gauge,
-  Layers,
-  ArrowLeft,
-  Maximize,
-  Minimize,
-  Zap,
-  Volume2,
-  VolumeX,
-  SkipForward,
-  SkipBack,
-  CheckCircle2,
-  Check
+import { 
+  Bookmark, 
+  BookmarkCheck, 
+  Play, 
+  Pause, 
+  FileText, 
+  Download, 
+  ChevronDown, 
+  Gauge, 
+  Layers, 
+  ArrowLeft, 
+  Maximize, 
+  Minimize, 
+  Zap, 
+  Volume2, 
+  VolumeX, 
+  SkipForward, 
+  SkipBack, 
+  CheckCircle2, 
+  Check,
+  AlertCircle 
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -118,9 +119,12 @@ export default function VideoPlayer() {
     }
   }, [course, lessonId, currentLessonIdNum, selectedModuleId]);
 
+  const [videoError, setVideoError] = useState<string | null>(null);
+
   // Auto-scroll to top when a new video/lesson is selected on mobile
   useEffect(() => {
     if (prevLessonIdRef.current !== lessonId) {
+      setVideoError(null);
       setIsPlaying(false);
       setIsBuffering(true);
       setCurrentTime(0);
@@ -270,6 +274,20 @@ export default function VideoPlayer() {
   };
   const handleDurationChange = () => {
     if (videoRef.current) setDuration(videoRef.current.duration);
+  };
+
+  const handleVideoError = (e: any) => {
+    console.error('Video error event:', e);
+    setIsBuffering(false);
+    setIsPlaying(false);
+    const err = videoRef.current?.error;
+    let msg = 'Failed to load video stream from Telegram.';
+    if (err?.code === 4) {
+      msg = 'The browser could not decode this video container/format. You can download the full video for offline playback below.';
+    } else if (err?.code === 2) {
+      msg = 'Network connection issue while downloading stream chunks.';
+    }
+    setVideoError(msg);
   };
 
   const handleSeeking = () => {
@@ -734,21 +752,59 @@ export default function VideoPlayer() {
               onSeeking={handleSeeking}
               onSeeked={handleSeeked}
               onEnded={handleEnded}
+              onError={handleVideoError}
               onTimeUpdate={handleTimeUpdate}
               onDurationChange={handleDurationChange}
               onLoadedMetadata={handleDurationChange}
               className="w-full h-full object-contain"
             />
 
+            {/* Playback Error Overlay */}
+            {videoError && (
+              <div 
+                onClick={(e) => e.stopPropagation()}
+                className="absolute inset-0 z-40 bg-black/90 flex flex-col items-center justify-center p-6 text-center space-y-3 cursor-default"
+              >
+                <div className="w-12 h-12 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <div className="max-w-md space-y-1">
+                  <h4 className="text-sm font-bold text-white">Playback Notice</h4>
+                  <p className="text-xs text-slate-400">{videoError}</p>
+                </div>
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={() => {
+                      setVideoError(null);
+                      setIsBuffering(true);
+                      if (videoRef.current) {
+                        videoRef.current.load();
+                        videoRef.current.play().catch(() => {});
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs"
+                  >
+                    Retry Playback
+                  </button>
+                  <button
+                    onClick={handleDownloadVideo}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors cursor-pointer border border-slate-700"
+                  >
+                    Download Video
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Buffering Spinner */}
-            {isBuffering && (
+            {isBuffering && !videoError && (
               <div className="absolute inset-0 flex items-center justify-center z-20 bg-black/40 pointer-events-none">
                 <Spinner />
               </div>
             )}
 
             {/* Center Play Button when Paused */}
-            {!isPlaying && !isBuffering && (
+            {!isPlaying && !isBuffering && !videoError && (
               <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
                 <div className="w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-blue-600/90 text-white flex items-center justify-center shadow-xl transition-transform scale-100 group-hover:scale-105">
                   <Play className="w-6 h-6 sm:w-8 sm:h-8 fill-current ml-0.5" />
