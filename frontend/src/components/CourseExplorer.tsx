@@ -232,25 +232,16 @@ export default function CourseExplorer() {
                     <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-100 dark:border-blue-900/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
                       <Folder className="w-5 h-5" />
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={(e) => handleStartRename(module, e)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 dark:hover:text-blue-400 transition-colors"
-                        title="Rename Module"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      {completionPct > 0 && (
-                        <span className={clsx(
-                          "text-[10px] font-bold px-2 py-0.5 rounded-md",
-                          completionPct === 100 
-                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
-                            : "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
-                        )}>
-                          {completionPct === 100 ? 'Completed' : `${completionPct}%`}
-                        </span>
-                      )}
-                    </div>
+                    {completionPct > 0 && (
+                      <span className={clsx(
+                        "text-[10px] font-bold px-2 py-0.5 rounded-md",
+                        completionPct === 100 
+                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                          : "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                      )}>
+                        {completionPct === 100 ? 'Completed' : `${completionPct}%`}
+                      </span>
+                    )}
                   </div>
 
                   <h3 className="font-bold text-sm md:text-base text-slate-900 dark:text-white leading-snug line-clamp-2 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
