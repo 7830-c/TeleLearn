@@ -375,19 +375,23 @@ async def stream_video(
     if if_none_match == f'"{etag}"':
         return StreamingResponse(iter([]), status_code=304, headers={"ETag": f'"{etag}"'})
 
-    workers_map = {
-        "low": 2,      # 2 parallel workers (Low bandwidth / conservative data usage)
-        "medium": 4,   # 4 parallel workers (Balanced responsive playback)
-        "high": 6,     # 6 parallel workers (High throughput / fast pre-buffering)
+    chunk_map = {
+        "low": 128 * 1024,      # 128 KB chunks (Low bandwidth / conservative data usage)
+        "medium": 256 * 1024,   # 256 KB chunks (Balanced responsive playback)
+        "high": 512 * 1024,     # 512 KB chunks (High throughput / fast pre-buffering)
     }
-    workers = workers_map.get(quality, 4)
+    chunk_request_size = chunk_map.get(quality, 256 * 1024)
 
-    # Use our high-performance parallel streamer with persistent connection pool
-    async def fast_telegram_stream():
-        from fast_stream import parallel_stream
+    async def telegram_passthrough_stream():
+        remaining = clen
         try:
-            async for chunk in parallel_stream(client, clean_phone, doc, start, clen, workers=workers):
-                yield chunk
+            async for piece in client.iter_download(doc, offset=start, request_size=chunk_request_size):
+                if remaining <= 0:
+                    break
+                if len(piece) > remaining:
+                    piece = piece[:remaining]
+                remaining -= len(piece)
+                yield piece
         except (asyncio.CancelledError, GeneratorExit):
             pass
         except Exception as e:
@@ -405,7 +409,7 @@ async def stream_video(
         headers["Content-Length"] = str(clen)
 
     return StreamingResponse(
-        fast_telegram_stream(),
+        telegram_passthrough_stream(),
         status_code=code,
         headers=headers
     )
