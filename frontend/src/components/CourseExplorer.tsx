@@ -14,6 +14,16 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 
+function formatDurationHoursMins(seconds: number): string {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '0 mins';
+  const totalMinutes = Math.round(seconds / 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h} hr${h > 1 ? 's' : ''}`;
+  return `${m} min${m > 1 ? 's' : ''}`;
+}
+
 export default function CourseExplorer() {
   const { courseId } = useParams();
   const navigate = useNavigate();
@@ -104,10 +114,25 @@ export default function CourseExplorer() {
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
               {currentModule ? currentModule.title : course.title}
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-              {currentModule 
-                ? `${currentModule.lessons?.length || 0} Video Lessons • ${currentModule.notes?.length || 0} Notes`
-                : `${course.modules?.length || 0} Sub-modules organized for learning.`}
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium flex items-center gap-1.5 flex-wrap">
+              {currentModule ? (
+                <>
+                  <span>{currentModule.lessons?.length || 0} Video Lessons</span>
+                  {(() => {
+                    const dur = (currentModule.lessons || []).reduce((acc: number, l: any) => acc + (l.duration || 0), 0);
+                    return dur > 0 ? (
+                      <>
+                        <span>&bull;</span>
+                        <span className="font-semibold text-blue-600 dark:text-blue-400">{formatDurationHoursMins(dur)} Content</span>
+                      </>
+                    ) : null;
+                  })()}
+                  <span>&bull;</span>
+                  <span>{currentModule.notes?.length || 0} Notes</span>
+                </>
+              ) : (
+                `${course.modules?.length || 0} Sub-modules organized for learning.`
+              )}
             </p>
           </div>
 
@@ -137,6 +162,7 @@ export default function CourseExplorer() {
           {course.modules?.map((module: any) => {
             const lessonCount = module.lessons?.length || 0;
             const noteCount = module.notes?.length || 0;
+            const moduleDuration = (module.lessons || []).reduce((acc: number, l: any) => acc + (l.duration || 0), 0);
             
             const completedCount = (module.lessons || []).filter((l: any) => 
               progressData.some((p: any) => p.lesson_id === l.id && p.is_completed)
@@ -172,10 +198,13 @@ export default function CourseExplorer() {
                 </div>
 
                 <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 font-medium">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5 flex-wrap">
                     <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
                       <PlayCircle className="w-3.5 h-3.5" />
-                      {lessonCount} Lessons
+                      <span>{lessonCount} Lessons</span>
+                      {moduleDuration > 0 && (
+                        <span className="text-slate-400 font-normal">({formatDurationHoursMins(moduleDuration)})</span>
+                      )}
                     </span>
                     {noteCount > 0 && (
                       <span className="flex items-center gap-1">
@@ -184,7 +213,7 @@ export default function CourseExplorer() {
                       </span>
                     )}
                   </div>
-                  <ChevronRight className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform" />
+                  <ChevronRight className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
                 </div>
               </div>
             );
@@ -267,12 +296,7 @@ export default function CourseExplorer() {
                             {lesson.duration ? (
                               <span className="flex items-center gap-1">
                                 <Clock className="w-3 h-3" />
-                                {(() => {
-                                  const sec = lesson.duration || 0;
-                                  const m = Math.floor(sec / 60);
-                                  const s = Math.floor(sec % 60);
-                                  return `${m}:${s.toString().padStart(2, '0')}`;
-                                })()}
+                                <span>{formatDurationHoursMins(lesson.duration)}</span>
                               </span>
                             ) : (
                               <span>Video Lecture</span>

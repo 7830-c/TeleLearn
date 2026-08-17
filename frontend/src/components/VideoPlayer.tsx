@@ -35,6 +35,16 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function formatDurationHoursMins(seconds: number): string {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '0 mins';
+  const totalMinutes = Math.round(seconds / 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h} hr${h > 1 ? 's' : ''}`;
+  return `${m} min${m > 1 ? 's' : ''}`;
+}
+
 function Spinner() {
   return (
     <div className="w-10 h-10 rounded-full border-4 border-blue-500/30 border-t-blue-500 animate-spin" />
@@ -121,9 +131,12 @@ export default function VideoPlayer() {
 
   const [videoError, setVideoError] = useState<string | null>(null);
 
+  const hasRestoredProgressRef = useRef(false);
+
   // Auto-scroll to top when a new video/lesson is selected on mobile
   useEffect(() => {
     if (prevLessonIdRef.current !== lessonId) {
+      hasRestoredProgressRef.current = false;
       setVideoError(null);
       setIsPlaying(false);
       setIsBuffering(true);
@@ -140,8 +153,28 @@ export default function VideoPlayer() {
     }
   }, [lessonId]);
 
+  const restoreSavedProgress = useCallback(() => {
+    if (hasRestoredProgressRef.current) return;
+    const v = videoRef.current;
+    if (!v) return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlTimestamp = parseInt(urlParams.get('t') || '0', 10);
+    const savedSeconds = urlTimestamp > 0 ? urlTimestamp : (currentProgress?.progress_seconds || 0);
+
+    if (savedSeconds > 5 && !currentProgress?.is_completed) {
+      if (!v.duration || savedSeconds < v.duration - 5) {
+        v.currentTime = savedSeconds;
+        setCurrentTime(savedSeconds);
+        lastSavedSecondsRef.current = savedSeconds;
+      }
+    }
+    hasRestoredProgressRef.current = true;
+  }, [currentProgress]);
+
   const handleCanPlay = useCallback(() => {
     setIsBuffering(false);
+    restoreSavedProgress();
     if (autoPlayRef.current && videoRef.current) {
       videoRef.current.play().catch(() => { });
       setIsPlaying(true);
@@ -152,7 +185,7 @@ export default function VideoPlayer() {
       isSeeking.current = false;
       wasPlayingBeforeSeek.current = false;
     }
-  }, []);
+  }, [restoreSavedProgress]);
 
   const saveProgress = async (seconds: number, dur: number, forceCompleted?: boolean) => {
     if (!dur || dur <= 0) return;
@@ -676,7 +709,7 @@ export default function VideoPlayer() {
                 <div className="flex-1 min-w-0">
                   <p className="truncate font-medium leading-snug">{lesson.text || `Lecture ${idx + 1}`}</p>
                   <p className={clsx('text-[10px]', isActive ? 'text-white/70' : 'text-slate-400')}>
-                    {lesson.duration ? formatTime(lesson.duration) : 'Video'}
+                    {lesson.duration ? formatDurationHoursMins(lesson.duration) : 'Video'}
                   </p>
                 </div>
 
@@ -981,7 +1014,7 @@ export default function VideoPlayer() {
               </h1>
 
               <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Telegram Media • {currentLesson?.date ? new Date(currentLesson.date).toLocaleDateString() : 'Active Lecture'} • {duration > 0 ? formatTime(duration) : 'Video'}
+                Telegram Media • {currentLesson?.date ? new Date(currentLesson.date).toLocaleDateString() : 'Active Lecture'} • {duration > 0 ? formatDurationHoursMins(duration) : 'Video'}
               </p>
             </div>
 

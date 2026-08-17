@@ -17,6 +17,16 @@ import {
   GraduationCap
 } from 'lucide-react';
 
+function formatDurationHoursMins(seconds: number): string {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '0 mins';
+  const totalMinutes = Math.round(seconds / 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h} hr${h > 1 ? 's' : ''}`;
+  return `${m} min${m > 1 ? 's' : ''}`;
+}
+
 export default function Dashboard() {
   const phone = localStorage.getItem('phone') || '';
   const navigate = useNavigate();
@@ -201,7 +211,7 @@ export default function Dashboard() {
           </h2>
 
           <div 
-            onClick={() => navigate(`/course/${continueWatching.course_id}/video/${continueWatching.lesson_id}`)}
+            onClick={() => navigate(`/course/${continueWatching.course_id}/video/${continueWatching.lesson_id}?t=${continueWatching.progress_seconds || 0}`)}
             className="bg-white dark:bg-[#131d31] rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center gap-4 border border-slate-300 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-600 transition-colors cursor-pointer group shadow-xs"
           >
             {/* Visual Frame */}
@@ -237,7 +247,7 @@ export default function Dashboard() {
               </h3>
 
               <p className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 font-normal">
-                {Math.floor(continueWatching.progress_seconds / 60)} / {Math.floor(continueWatching.duration_seconds / 60)} mins watched ({Math.min(100, Math.round((continueWatching.progress_seconds / Math.max(1, continueWatching.duration_seconds)) * 100))}%)
+                {formatDurationHoursMins(continueWatching.progress_seconds)} / {formatDurationHoursMins(continueWatching.duration_seconds)} watched ({Math.min(100, Math.round((continueWatching.progress_seconds / Math.max(1, continueWatching.duration_seconds)) * 100))}%)
               </p>
             </div>
 
