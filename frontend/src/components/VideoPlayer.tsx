@@ -364,10 +364,24 @@ export default function VideoPlayer() {
     }
   };
 
-  const handleVideoError = (e: any) => {
+  const handleVideoError = async (e: any) => {
     console.error('Video error event:', e);
     setIsBuffering(false);
     setIsPlaying(false);
+
+    try {
+      const res = await fetch(streamUrl);
+      if (res.status === 401) {
+        setVideoError('Telegram session expired or used on another device. Please log in again to re-authenticate.');
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setVideoError(data?.detail || 'Unable to stream video chunks from Telegram.');
+        return;
+      }
+    } catch {}
+
     const err = videoRef.current?.error;
     let msg = 'Failed to load video stream from Telegram.';
     if (err?.code === 4) {
@@ -923,20 +937,29 @@ export default function VideoPlayer() {
                   <h4 className="text-sm font-bold text-white">Playback Notice</h4>
                   <p className="text-xs text-slate-400">{videoError}</p>
                 </div>
-                <div className="flex items-center gap-3 pt-2">
-                  <button
-                    onClick={() => {
-                      setVideoError(null);
-                      setIsBuffering(true);
-                      if (videoRef.current) {
-                        videoRef.current.load();
-                        videoRef.current.play().catch(() => {});
-                      }
-                    }}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs"
-                  >
-                    Retry Playback
-                  </button>
+                <div className="flex items-center gap-3 pt-2 flex-wrap justify-center">
+                  {videoError.toLowerCase().includes('log in') || videoError.toLowerCase().includes('session') ? (
+                    <button
+                      onClick={() => navigate('/login')}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs"
+                    >
+                      Log In Again
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setVideoError(null);
+                        setIsBuffering(true);
+                        if (videoRef.current) {
+                          videoRef.current.load();
+                          videoRef.current.play().catch(() => {});
+                        }
+                      }}
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs"
+                    >
+                      Retry Playback
+                    </button>
+                  )}
                   <button
                     onClick={handleDownloadVideo}
                     className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors cursor-pointer border border-slate-700"

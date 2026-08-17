@@ -400,6 +400,11 @@ async def stream_video(
         client = await get_client(clean_phone)
         msg    = await client.get_messages(channel_id, ids=msg_id)
     except Exception as e:
+        err_str = str(e)
+        if "AuthKeyDuplicatedError" in err_str or "two different IP addresses" in err_str or "unauthorized" in err_str.lower():
+            from telegram_client import clear_client
+            await clear_client(clean_phone)
+            raise HTTPException(status_code=401, detail="Telegram session expired or used on another IP. Please login again.")
         raise HTTPException(status_code=500, detail=f"Telegram error: {e}")
 
     if not msg or not msg.media or not hasattr(msg.media, "document"):
