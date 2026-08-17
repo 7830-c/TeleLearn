@@ -132,11 +132,14 @@ export default function VideoPlayer() {
   const [videoError, setVideoError] = useState<string | null>(null);
 
   const hasRestoredProgressRef = useRef(false);
+  const pendingSeekPositionRef = useRef<number | null>(null);
+  const pendingPlayRef = useRef<boolean>(false);
 
   // Auto-scroll to top when a new video/lesson is selected on mobile
   useEffect(() => {
     if (prevLessonIdRef.current !== lessonId) {
       hasRestoredProgressRef.current = false;
+      pendingSeekPositionRef.current = null;
       setVideoError(null);
       setIsPlaying(false);
       setIsBuffering(true);
@@ -172,20 +175,51 @@ export default function VideoPlayer() {
     hasRestoredProgressRef.current = true;
   }, [currentProgress]);
 
+  const handleToggleBufferSpeed = () => {
+    const v = videoRef.current;
+    const currentPos = v ? v.currentTime : currentTime;
+    const wasPlaying = v ? !v.paused : isPlaying;
+
+    // Preserve exact playback timestamp and playing state when changing buffer parallelism
+    pendingSeekPositionRef.current = currentPos;
+    pendingPlayRef.current = wasPlaying;
+
+    setBufferSpeed(prev => (prev === 'low' ? 'medium' : prev === 'medium' ? 'high' : 'low'));
+  };
+
   const handleCanPlay = useCallback(() => {
     setIsBuffering(false);
-    restoreSavedProgress();
-    if (autoPlayRef.current && videoRef.current) {
-      videoRef.current.play().catch(() => { });
-      setIsPlaying(true);
+    const v = videoRef.current;
+    if (v) {
+      if (playbackSpeed !== 1) {
+        v.playbackRate = playbackSpeed;
+      }
+      if (pendingSeekPositionRef.current !== null) {
+        const target = pendingSeekPositionRef.current;
+        pendingSeekPositionRef.current = null;
+        if (target > 0) {
+          v.currentTime = target;
+          setCurrentTime(target);
+        }
+        if (pendingPlayRef.current) {
+          v.play().catch(() => { });
+          setIsPlaying(true);
+        }
+      } else {
+        restoreSavedProgress();
+      }
+      if (autoPlayRef.current) {
+        v.play().catch(() => { });
+        setIsPlaying(true);
+      }
+      if (isSeeking.current && wasPlayingBeforeSeek.current) {
+        v.play().catch(() => { });
+        setIsPlaying(true);
+        isSeeking.current = false;
+        wasPlayingBeforeSeek.current = false;
+      }
     }
-    if (isSeeking.current && wasPlayingBeforeSeek.current && videoRef.current) {
-      videoRef.current.play().catch(() => { });
-      setIsPlaying(true);
-      isSeeking.current = false;
-      wasPlayingBeforeSeek.current = false;
-    }
-  }, [restoreSavedProgress]);
+  }, [restoreSavedProgress, playbackSpeed]);
 
   const saveProgress = async (seconds: number, dur: number, forceCompleted?: boolean) => {
     if (!dur || dur <= 0) return;
@@ -306,7 +340,22 @@ export default function VideoPlayer() {
     }
   };
   const handleDurationChange = () => {
-    if (videoRef.current) setDuration(videoRef.current.duration);
+    const v = videoRef.current;
+    if (v) {
+      setDuration(v.duration);
+      if (pendingSeekPositionRef.current !== null) {
+        const target = pendingSeekPositionRef.current;
+        pendingSeekPositionRef.current = null;
+        if (target > 0 && target < v.duration) {
+          v.currentTime = target;
+          setCurrentTime(target);
+        }
+        if (pendingPlayRef.current) {
+          v.play().catch(() => { });
+          setIsPlaying(true);
+        }
+      }
+    }
   };
 
   const handleVideoError = (e: any) => {
@@ -973,9 +1022,9 @@ export default function VideoPlayer() {
                     </div>
 
                     <button
-                      onClick={() => setBufferSpeed(prev => prev === 'low' ? 'medium' : prev === 'medium' ? 'high' : 'low')}
-                      className="bg-white/15 hover:bg-white/25 px-1.5 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-bold text-amber-400 flex items-center gap-0.5"
-                      title={`Buffer parallelism: ${bufferSpeed}`}
+                      onClick={handleToggleBufferSpeed}
+                      className="bg-white/15 hover:bg-white/25 px-1.5 py-0.5 rounded-lg text-[9px] sm:text-[10px] font-bold text-amber-400 flex items-center gap-0.5 cursor-pointer"
+                      title={`Buffer parallelism: ${bufferSpeed === 'low' ? '1x' : bufferSpeed === 'medium' ? '2x' : '3x'}`}
                     >
                       <Zap className="w-2.5 h-2.5" />
                       <span>{bufferSpeed === 'low' ? '1x' : bufferSpeed === 'medium' ? '2x' : '3x'}</span>
