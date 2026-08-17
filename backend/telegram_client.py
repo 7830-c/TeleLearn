@@ -90,12 +90,24 @@ async def get_client(phone: str) -> TelegramClient:
         session_str = await _get_session_string(clean_phone)
         session = StringSession(session_str)
         client = TelegramClient(session, API_ID, API_HASH)
-        await client.connect()
+        try:
+            await client.connect()
+        except Exception as e:
+            err_msg = str(e)
+            if "AuthKeyDuplicatedError" in err_msg or "two different IP addresses" in err_msg or "SecurityError" in err_msg or "Key was already used" in err_msg:
+                print(f"[telegram_client] Resetting invalid/conflicted session for {clean_phone} due to: {e}")
+                await save_session_string(clean_phone, "")
+                session = StringSession("")
+                client = TelegramClient(session, API_ID, API_HASH)
+                await client.connect()
+            else:
+                raise e
+
         clients[clean_phone] = client
         return client
 
 async def clear_client(phone: str):
-    """Force remove a client from cache (useful if session gets invalidated)."""
+    """Force remove a client from cache and clear stored invalid session string."""
     clean_phone = normalize_phone(phone)
     async with _client_lock:
         if clean_phone in clients:
@@ -104,3 +116,7 @@ async def clear_client(phone: str):
             except:
                 pass
             del clients[clean_phone]
+        try:
+            await save_session_string(clean_phone, "")
+        except Exception as e:
+            print(f"[telegram_client] Error clearing DB session string: {e}")

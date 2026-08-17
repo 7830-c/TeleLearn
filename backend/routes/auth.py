@@ -25,6 +25,7 @@ class VerifyPasswordRequest(BaseModel):
 async def send_code(request: SendCodeRequest):
     clean_phone = normalize_phone(request.phone)
     try:
+        await clear_client(clean_phone)
         client = await get_client(clean_phone)
         result = await client.send_code_request(clean_phone)
         return {"phone_code_hash": result.phone_code_hash}
