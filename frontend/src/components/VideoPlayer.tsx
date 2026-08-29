@@ -372,33 +372,52 @@ export default function VideoPlayer() {
     }
   };
 
-  const handleVideoError = async (e: any) => {
+  const streamUrl = course ? `${API_BASE}/courses/stream/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}?quality=${bufferSpeed}` : '';
+  const posterUrl = course ? `${API_BASE}/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}` : '';
+
+  const handleVideoError = useCallback(async (e: any) => {
     console.error('Video error event:', e);
     setIsBuffering(false);
     setIsPlaying(false);
 
-    try {
-      const res = await fetch(streamUrl);
-      if (res.status === 401) {
-        setVideoError('Telegram session expired or used on another device. Please log in again to re-authenticate.');
-        return;
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setVideoError(data?.detail || 'Unable to stream video chunks from Telegram.');
-        return;
-      }
-    } catch {}
+    if (streamUrl) {
+      try {
+        const res = await fetch(streamUrl);
+        if (res.status === 401) {
+          setVideoError('Telegram session expired or logged in elsewhere. Please log in again to re-authenticate.');
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setVideoError(data?.detail || 'Unable to stream video chunks from Telegram.');
+          return;
+        }
+      } catch {}
+    }
 
     const err = videoRef.current?.error;
     let msg = 'Failed to load video stream from Telegram.';
     if (err?.code === 4) {
-      msg = 'The browser could not decode this video container/format. You can download the full video for offline playback below.';
+      msg = 'The browser could not decode this video container/format (e.g. MKV). Please download the video for offline playback below.';
     } else if (err?.code === 2) {
       msg = 'Network connection issue while downloading stream chunks.';
     }
     setVideoError(msg);
-  };
+  }, [streamUrl]);
+
+  // Watchdog: If video is stuck in initial buffering for > 8s, verify stream health
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    if (isBuffering && !isPlaying && !videoError && course && lessonId) {
+      timer = setTimeout(() => {
+        const v = videoRef.current;
+        if (v && v.currentTime === 0 && !v.duration) {
+          handleVideoError({ type: 'buffering_timeout' });
+        }
+      }, 8500);
+    }
+    return () => clearTimeout(timer);
+  }, [isBuffering, isPlaying, videoError, course, lessonId, handleVideoError]);
 
   const handleSeeking = () => {
     isSeeking.current = true;
@@ -707,9 +726,6 @@ export default function VideoPlayer() {
     : totalModuleSeconds > 0
     ? `${Math.round(totalModuleSeconds / 60)} mins`
     : null;
-
-  const streamUrl = `${API_BASE}/courses/stream/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}?quality=${bufferSpeed}`;
-  const posterUrl = `${API_BASE}/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}`;
 
   const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bufferedPct = buffered * 100;

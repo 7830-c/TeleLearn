@@ -19,7 +19,7 @@ from telethon.tl.types import (
     MessageActionTopicCreate,
     MessageActionTopicEdit,
 )
-from telegram_client import get_client, normalize_phone
+from telegram_client import get_client, get_authorized_client, normalize_phone
 from database import get_db_session, Course, User
 from sqlalchemy.future import select
 
@@ -135,9 +135,7 @@ async def check_telegram_auth_error(phone: str, e: Exception):
 async def list_channels(phone: str):
     clean_phone = normalize_phone(phone)
     try:
-        client = await get_client(clean_phone)
-        if not await client.is_user_authorized():
-            raise HTTPException(status_code=401, detail="User not authorized")
+        client = await get_authorized_client(clean_phone)
         dialogs = await client.get_dialogs()
         return {"channels": [
             {"id": d.id, "name": d.name, "is_channel": d.is_channel, "is_group": d.is_group}
@@ -154,9 +152,7 @@ async def list_channels(phone: str):
 async def sync_course(request: CourseSyncRequest):
     clean_phone = normalize_phone(request.phone)
     try:
-        client = await get_client(clean_phone)
-        if not await client.is_user_authorized():
-            raise HTTPException(status_code=401, detail="User not authorized")
+        client = await get_authorized_client(clean_phone)
 
         entity       = await client.get_entity(request.channel_id)
         channel_name = getattr(entity, "title", f"Channel {request.channel_id}")
@@ -386,7 +382,7 @@ async def get_thumbnail(phone: str, channel_id: int, msg_id: int):
     cache_path = os.path.join(CACHE_DIR, f"thumb_{channel_id}_{msg_id}.jpg")
     if not os.path.exists(cache_path):
         clean_phone = normalize_phone(phone)
-        client = await get_client(clean_phone)
+        client = await get_authorized_client(clean_phone)
         msg = await client.get_messages(channel_id, ids=msg_id)
         if not msg or not msg.media:
             raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -411,7 +407,7 @@ async def stream_info(phone: str, channel_id: int, msg_id: int):
     """Returns file size for video player."""
     try:
         clean_phone = normalize_phone(phone)
-        client = await get_client(clean_phone)
+        client = await get_authorized_client(clean_phone)
         msg = await client.get_messages(channel_id, ids=msg_id)
         if msg and msg.media and hasattr(msg.media, "document"):
             file_size = msg.media.document.size
@@ -440,7 +436,7 @@ async def stream_video(
 ):
     try:
         clean_phone = normalize_phone(phone)
-        client = await get_client(clean_phone)
+        client = await get_authorized_client(clean_phone)
         msg    = await client.get_messages(channel_id, ids=msg_id)
     except HTTPException:
         raise
@@ -512,7 +508,7 @@ async def stream_video(
 async def download_file(phone: str, channel_id: int, msg_id: int):
     try:
         clean_phone = normalize_phone(phone)
-        client = await get_client(clean_phone)
+        client = await get_authorized_client(clean_phone)
         msg = await client.get_messages(channel_id, ids=msg_id)
         if not msg or not msg.media:
             raise HTTPException(status_code=404, detail="File not found")

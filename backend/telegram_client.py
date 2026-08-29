@@ -81,7 +81,7 @@ async def get_client(phone: str) -> TelegramClient:
             client = clients[clean_phone]
             try:
                 if not client.is_connected():
-                    await client.connect()
+                    await asyncio.wait_for(client.connect(), timeout=8.0)
                 return client
             except Exception as e:
                 print(f"[telegram_client] Reconnecting due to error: {e}")
@@ -91,13 +91,13 @@ async def get_client(phone: str) -> TelegramClient:
         session = StringSession(session_str)
         client = TelegramClient(session, API_ID, API_HASH)
         try:
-            await client.connect()
+            await asyncio.wait_for(client.connect(), timeout=8.0)
             if session_str and not await client.is_user_authorized():
                 print(f"[telegram_client] Stale un-authorized session for {clean_phone}. Resetting...")
                 await clear_client(clean_phone)
                 session = StringSession("")
                 client = TelegramClient(session, API_ID, API_HASH)
-                await client.connect()
+                await asyncio.wait_for(client.connect(), timeout=8.0)
         except Exception as e:
             err_msg = str(e)
             if any(term in err_msg for term in [
@@ -114,12 +114,52 @@ async def get_client(phone: str) -> TelegramClient:
                 await clear_client(clean_phone)
                 session = StringSession("")
                 client = TelegramClient(session, API_ID, API_HASH)
-                await client.connect()
+                await asyncio.wait_for(client.connect(), timeout=8.0)
             else:
                 raise e
 
         clients[clean_phone] = client
         return client
+
+
+async def get_authorized_client(phone: str) -> TelegramClient:
+    """
+    Returns an active, authorized TelegramClient.
+    If the session is revoked or unauthenticated, immediately cleans up and raises HTTP 401.
+    """
+    from fastapi import HTTPException
+    clean_phone = normalize_phone(phone)
+    try:
+        client = await get_client(clean_phone)
+        if not await client.is_user_authorized():
+            await clear_client(clean_phone)
+            raise HTTPException(
+                status_code=401,
+                detail="Telegram session is expired or logged in elsewhere. Please log in again."
+            )
+        return client
+    except HTTPException:
+        raise
+    except Exception as e:
+        err_msg = str(e)
+        if any(term in err_msg for term in [
+            "AuthKeyDuplicatedError",
+            "AuthKeyUnregisteredError",
+            "The key is not registered",
+            "two different IP addresses",
+            "SecurityError",
+            "Key was already used",
+            "SessionRevokedError",
+            "UserDeactivatedError",
+            "Unauthorized"
+        ]):
+            await clear_client(clean_phone)
+            raise HTTPException(
+                status_code=401,
+                detail="Telegram session was revoked by Telegram security. Please log in again."
+            )
+        raise
+
 
 async def clear_client(phone: str):
     """Force remove a client from cache and clear stored invalid session string."""
@@ -135,3 +175,4 @@ async def clear_client(phone: str):
             await save_session_string(clean_phone, "")
         except Exception as e:
             print(f"[telegram_client] Error clearing DB session string: {e}")
+
