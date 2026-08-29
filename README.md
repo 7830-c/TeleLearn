@@ -1,4 +1,4 @@
-# 🎓 TeleLearn
+# 🎓TeleLearn
 
 > Transform any Telegram Channel or Forum into a modern, beautifully structured, and high-performance video learning platform.
 
