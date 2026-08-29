@@ -45,7 +45,7 @@ export default function Dashboard() {
     continue_watching: any;
     bookmarks_count: number;
   }>(`/dashboard?phone=${encodeURIComponent(phone)}`, {
-    ttl: 2 * 60 * 1000
+    ttl: 0 // Always fetch fresh data in background, but instantly show cached data
   });
 
   const courses = dashboardData?.courses || [];

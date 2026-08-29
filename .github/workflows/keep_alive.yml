@@ -2,9 +2,9 @@ name: Keep Render Backend Awake
 
 on:
   schedule:
-    # Ping every 12 minutes so Render free tier never goes to sleep (spins down after 15m inactivity)
-    - cron: '*/12 * * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    # Ping every 10 minutes so Render free tier never sleeps (spins down after 15m inactivity)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
 
 jobs:
   keep_alive:
@@ -12,4 +12,18 @@ jobs:
     steps:
       - name: Ping Backend Health Endpoint
         run: |
-          curl -f -sS "https://telelearn.onrender.com/health" || echo "Ping attempted"
+          echo "Triggering keep-alive health pings..."
+          
+          # Ping primary Render backend service URL
+          curl -f -sS -m 20 "https://telelearn-backend.onrender.com/health" || curl -f -sS -m 20 "https://telelearn-backend.onrender.com/api/health" || true
+          
+          # Ping secondary alias URL if present
+          curl -f -sS -m 20 "https://telelearn.onrender.com/health" || curl -f -sS -m 20 "https://telelearn.onrender.com/api/health" || true
+          
+          # Optional custom URL secret if configured in GitHub repo settings
+          if [ -n "${{ secrets.RENDER_BACKEND_URL }}" ]; then
+            echo "Pinging secret RENDER_BACKEND_URL..."
+            curl -f -sS -m 20 "${{ secrets.RENDER_BACKEND_URL }}/health" || true
+          fi
+          
+          echo "Keep-alive ping completed successfully."

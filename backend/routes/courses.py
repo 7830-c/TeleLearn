@@ -229,9 +229,16 @@ async def sync_course(request: CourseSyncRequest):
 
         async with get_db_session() as session:
             clean_phone = normalize_phone(request.phone)
-            user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+            user_res = await session.execute(
+                select(User).filter((User.phone == request.phone) | (User.phone == clean_phone))
+            )
             user = user_res.scalars().first()
-            user_id = user.id if user else None
+            if not user:
+                user = User(phone=clean_phone)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+            user_id = user.id
 
             result = await session.execute(
                 select(Course).filter_by(user_id=user_id, channel_id=request.channel_id)
@@ -254,6 +261,9 @@ async def sync_course(request: CourseSyncRequest):
             await session.refresh(course)
             course_data["_id"] = str(course.id)
             
+        from routes.dashboard import invalidate_dashboard_cache
+        invalidate_dashboard_cache(clean_phone)
+            
         return {"success": True, "course": course_data}
     except Exception as e:
         print("Sync course error:", e)
@@ -265,12 +275,16 @@ async def get_courses(phone: str = None):
     async with get_db_session() as session:
         if phone:
             clean_phone = normalize_phone(phone)
-            user_res = await session.execute(select(User).filter_by(phone=clean_phone))
+            user_res = await session.execute(
+                select(User).filter((User.phone == phone) | (User.phone == clean_phone))
+            )
             user = user_res.scalars().first()
-            if user:
-                result = await session.execute(select(Course).filter_by(user_id=user.id))
-            else:
-                return {"courses": []}
+            if not user:
+                user = User(phone=clean_phone)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+            result = await session.execute(select(Course).filter_by(user_id=user.id))
         else:
             result = await session.execute(select(Course))
 
@@ -358,6 +372,11 @@ async def delete_course(course_id: str, phone: str = None):
         if course:
             await session.delete(course)
             await session.commit()
+            
+        if phone:
+            from routes.dashboard import invalidate_dashboard_cache
+            invalidate_dashboard_cache(normalize_phone(phone))
+            
         return {"success": True}
 
 
@@ -470,12 +489,13 @@ async def stream_video(
             print(f"[stream] Error during live stream {channel_id}/{msg_id}: {e}")
 
     headers = {
-        "Content-Range":       f"bytes {start}-{end}/{file_size}",
-        "Accept-Ranges":       "bytes",
-        "Content-Type":        mime_type,
-        "Content-Disposition": "inline",
-        "ETag":                f'"{etag}"',
-        "Cache-Control":       "private, max-age=604800",  # Cache on user's device for 7 days
+        "Content-Range":                 f"bytes {start}-{end}/{file_size}",
+        "Accept-Ranges":                 "bytes",
+        "Content-Type":                  mime_type,
+        "Content-Disposition":           "inline",
+        "ETag":                          f'"{etag}"',
+        "Cache-Control":                 "private, max-age=604800",  # Cache on user's device for 7 days
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length, Content-Type, ETag",
     }
     if clen > 0:
         headers["Content-Length"] = str(clen)

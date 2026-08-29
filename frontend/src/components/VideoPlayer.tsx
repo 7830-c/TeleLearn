@@ -108,6 +108,13 @@ export default function VideoPlayer() {
 
   const [bufferSpeed, setBufferSpeed] = useState<'low' | 'medium' | 'high'>('medium');
 
+  const [showSkipOverlay, setShowSkipOverlay] = useState<'forward' | 'backward' | null>(null);
+  const [showPlayPauseOverlay, setShowPlayPauseOverlay] = useState<'play' | 'pause' | null>(null);
+  const clickTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [isMouseMoving, setIsMouseMoving] = useState(false);
+  const mouseMoveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const isSeeking = useRef(false);
   const wasPlayingBeforeSeek = useRef(false);
   const prevLessonIdRef = useRef<string | undefined>(lessonId);
@@ -288,13 +295,20 @@ export default function VideoPlayer() {
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
+    setIsMouseMoving(true);
+    
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     controlsTimerRef.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) {
+      if (isPlaying) {
         setShowControls(false);
       }
     }, 3500);
-  }, []);
+
+    if (mouseMoveTimerRef.current) clearTimeout(mouseMoveTimerRef.current);
+    mouseMoveTimerRef.current = setTimeout(() => {
+      setIsMouseMoving(false);
+    }, 2000);
+  }, [isPlaying]);
 
   const handlePlay = () => { setIsPlaying(true); setIsBuffering(false); };
   const handlePause = () => {
@@ -401,7 +415,6 @@ export default function VideoPlayer() {
     wasPlayingBeforeSeek.current = false;
   };
 
-  // Robust play/pause toggle that handles initial loading & buffering state reliably
   const togglePlayPause = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -420,6 +433,42 @@ export default function VideoPlayer() {
     }
     resetControlsTimer();
   }, [isPlaying, resetControlsTimer]);
+
+  const handleVideoAreaClick = (e: React.MouseEvent, side: 'left' | 'center' | 'right') => {
+    e.stopPropagation();
+    
+    // We want to detect double clicks vs single clicks.
+    if (e.detail === 1) {
+      // First click
+      clickTimeoutRef.current = setTimeout(() => {
+        // Read the ACTUAL playing state from the video element (not stale React state)
+        const wasPlaying = videoRef.current ? !videoRef.current.paused : false;
+        togglePlayPause();
+        // Show overlay for what the NEW state will be after toggle
+        setShowPlayPauseOverlay(wasPlaying ? 'pause' : 'play');
+        setTimeout(() => setShowPlayPauseOverlay(null), 500);
+      }, 250); // 250ms threshold for double click
+    } else if (e.detail === 2) {
+      // Double click
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+      }
+      
+      if (side === 'left') {
+        skipSeconds(-10);
+        setShowSkipOverlay('backward');
+        setTimeout(() => setShowSkipOverlay(null), 500);
+      } else if (side === 'right') {
+        skipSeconds(10);
+        setShowSkipOverlay('forward');
+        setTimeout(() => setShowSkipOverlay(null), 500);
+      } else {
+        // Double click center -> toggle fullscreen (bonus feature)
+        toggleFullscreen();
+      }
+    }
+  };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = videoRef.current;
@@ -844,9 +893,75 @@ export default function VideoPlayer() {
             ref={containerRef}
             onMouseMove={resetControlsTimer}
             onMouseLeave={() => { if (isPlaying) setShowControls(false); }}
-            onClick={togglePlayPause}
             className="bg-black rounded-2xl sm:rounded-3xl overflow-hidden shadow-lg aspect-video relative border border-slate-800/80 cursor-pointer select-none group w-full"
           >
+            {/* Hit areas for tap/double-tap */}
+            <div className="absolute inset-0 z-10 flex">
+              <div 
+                className="w-[30%] h-full" 
+                onClick={(e) => handleVideoAreaClick(e, 'left')} 
+              />
+              <div 
+                className="w-[40%] h-full" 
+                onClick={(e) => handleVideoAreaClick(e, 'center')} 
+              />
+              <div 
+                className="w-[30%] h-full" 
+                onClick={(e) => handleVideoAreaClick(e, 'right')} 
+              />
+            </div>
+
+            {/* Skip & Play/Pause Overlay Animations */}
+            {showSkipOverlay && (
+              <div className={clsx(
+                "absolute top-0 bottom-0 w-1/3 bg-white/10 z-20 flex flex-col items-center justify-center animate-pulse pointer-events-none",
+                showSkipOverlay === 'backward' ? "left-0 rounded-r-[100%]" : "right-0 rounded-l-[100%]"
+              )}>
+                {showSkipOverlay === 'backward' ? <SkipBack className="w-10 h-10 sm:w-16 sm:h-16 text-white" /> : <SkipForward className="w-10 h-10 sm:w-16 sm:h-16 text-white" />}
+                <span className="text-white font-bold text-sm sm:text-lg mt-2 shadow-sm">10s</span>
+              </div>
+            )}
+
+            {showPlayPauseOverlay && (
+              <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+                <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-full bg-black/60 flex items-center justify-center animate-ping opacity-100">
+                  {showPlayPauseOverlay === 'play' ? (
+                    <Play className="w-8 h-8 sm:w-12 sm:h-12 text-white fill-current ml-1" />
+                  ) : (
+                    <Pause className="w-8 h-8 sm:w-12 sm:h-12 text-white fill-current" />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Desktop Skip Buttons (Visible on Hover) */}
+            <div 
+              className={clsx(
+                'absolute inset-0 z-20 pointer-events-none flex items-center justify-between px-8 sm:px-16 transition-opacity duration-300 hidden sm:flex',
+                isMouseMoving ? 'opacity-100' : 'opacity-0'
+              )}
+            >
+              <button 
+                onClick={(e) => { e.stopPropagation(); skipSeconds(-10); }}
+                className={clsx(
+                  "w-12 h-12 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center backdrop-blur-sm transition-transform hover:scale-110 shadow-lg",
+                  isMouseMoving ? "pointer-events-auto" : "pointer-events-none"
+                )}
+                title="Rewind 10s"
+              >
+                <SkipBack className="w-6 h-6" />
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); skipSeconds(10); }}
+                className={clsx(
+                  "w-12 h-12 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center backdrop-blur-sm transition-transform hover:scale-110 shadow-lg",
+                  isMouseMoving ? "pointer-events-auto" : "pointer-events-none"
+                )}
+                title="Skip 10s"
+              >
+                <SkipForward className="w-6 h-6" />
+              </button>
+            </div>
             <video
               key={lessonId}
               ref={videoRef}

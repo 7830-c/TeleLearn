@@ -1,4 +1,5 @@
 services:
+  # Backend API
   - type: web
     name: telelearn-backend
     env: python
@@ -18,3 +19,24 @@ services:
         value: "34979954"
       - key: TELEGRAM_API_HASH
         value: "55a2f5c696725c26d9b2373e7c1ba1ad"
+
+  # Frontend Static Site
+  - type: web
+    name: telelearn-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    plan: free
+    autoDeploy: true
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=0, must-revalidate
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_HOST
+        value: https://telelearn-backend.onrender.com

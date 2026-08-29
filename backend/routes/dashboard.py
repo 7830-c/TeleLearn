@@ -22,8 +22,17 @@ def invalidate_dashboard_cache(phone: str = None):
 
 
 async def _get_user_by_phone(session, phone: str):
-    result = await session.execute(select(User).filter_by(phone=phone))
-    return result.scalars().first()
+    clean = normalize_phone(phone)
+    result = await session.execute(
+        select(User).filter((User.phone == phone) | (User.phone == clean))
+    )
+    user = result.scalars().first()
+    if not user:
+        user = User(phone=clean)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+    return user
 
 
 async def _calculate_streak_days(session, user_id: int) -> int:
