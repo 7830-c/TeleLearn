@@ -39,25 +39,43 @@ export default function Dashboard() {
     return titles[Math.floor(Math.random() * titles.length)];
   }, []);
 
-  const { data: dashboardData, isLoading, refresh } = useCache<{
+  // 1. Static Courses Catalog — Cached on device for 24h (0ms instant load on open)
+  const { data: dashboardData, isLoading: isCoursesLoading, refresh: refreshCourses } = useCache<{
     courses: any[];
+    metrics?: { total_hours: number; hours_today: number; streak_days: number };
+    continue_watching?: any;
+    bookmarks_count?: number;
+  }>(`/dashboard?phone=${encodeURIComponent(phone)}`, {
+    ttl: 24 * 60 * 60 * 1000 // 24 hours — only re-fetched when a course is added/deleted
+  });
+
+  // 2. Fast Dynamic Live Stats — Revalidated in background (<20ms: streak, today's hours, accurate continue watching)
+  const { data: liveData, refresh: refreshLive } = useCache<{
     metrics: { total_hours: number; hours_today: number; streak_days: number };
     continue_watching: any;
+    completed_counts: Record<string, number>;
     bookmarks_count: number;
-  }>(`/dashboard?phone=${encodeURIComponent(phone)}`, {
-    ttl: 0 // Always fetch fresh data in background, but instantly show cached data
+  }>(`/dashboard/live?phone=${encodeURIComponent(phone)}`, {
+    ttl: 0 // Fetch fresh stats in background without reloading static courses
   });
 
   const courses = dashboardData?.courses || [];
-  const metrics = dashboardData?.metrics || { total_hours: 0, hours_today: 0, streak_days: 0 };
-  const continueWatching = dashboardData?.continue_watching;
-  const bookmarksCount = dashboardData?.bookmarks_count || 0;
+  const metrics = liveData?.metrics || dashboardData?.metrics || { total_hours: 0, hours_today: 0, streak_days: 0 };
+  const continueWatching = liveData !== undefined ? liveData?.continue_watching : dashboardData?.continue_watching;
+  const completedCounts = liveData?.completed_counts || {};
+  const bookmarksCount = liveData?.bookmarks_count ?? dashboardData?.bookmarks_count ?? 0;
+  const isLoading = isCoursesLoading && !dashboardData;
 
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';
     if (hour < 18) return 'Good afternoon';
     return 'Good evening';
+  };
+
+  const handleManualRefresh = async () => {
+    invalidateCache('/dashboard');
+    await Promise.all([refreshCourses(), refreshLive()]);
   };
 
   const handleSyncCourse = async (e: React.MouseEvent, channelId: number) => {
@@ -67,7 +85,7 @@ export default function Dashboard() {
       await api.post('/courses/sync', { phone, channel_id: channelId });
       invalidateCache('/dashboard');
       invalidateCache('/courses');
-      await refresh();
+      await Promise.all([refreshCourses(), refreshLive()]);
     } catch (err) {
       console.error('Failed to sync course:', err);
     } finally {
@@ -82,7 +100,7 @@ export default function Dashboard() {
       await api.delete(`/courses/${courseId}?phone=${encodeURIComponent(phone)}`);
       invalidateCache('/dashboard');
       invalidateCache('/courses');
-      await refresh();
+      await Promise.all([refreshCourses(), refreshLive()]);
     } catch (err) {
       console.error('Failed to delete course:', err);
     }
@@ -128,7 +146,7 @@ export default function Dashboard() {
               <span>Import Channel</span>
             </button>
             <button
-              onClick={() => refresh()}
+              onClick={handleManualRefresh}
               className="p-2 sm:p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shadow-xs cursor-pointer"
               title="Refresh Dashboard"
             >
@@ -247,12 +265,15 @@ export default function Dashboard() {
               </h3>
 
               <p className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 font-normal">
-                {formatDurationHoursMins(continueWatching.progress_seconds)} / {formatDurationHoursMins(continueWatching.duration_seconds)} watched ({Math.min(100, Math.round((continueWatching.progress_seconds / Math.max(1, continueWatching.duration_seconds)) * 100))}%)
+                {continueWatching.progress_seconds > 0
+                  ? `${formatDurationHoursMins(continueWatching.progress_seconds)} / ${formatDurationHoursMins(continueWatching.duration_seconds)} watched (${Math.min(100, Math.round((continueWatching.progress_seconds / Math.max(1, continueWatching.duration_seconds)) * 100))}%)`
+                  : `Up Next • ${formatDurationHoursMins(continueWatching.duration_seconds)} duration`
+                }
               </p>
             </div>
 
             <button className="w-full sm:w-auto px-4 py-2 rounded-xl bg-blue-600 group-hover:bg-blue-700 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors shrink-0">
-              <span>Resume</span>
+              <span>{continueWatching.progress_seconds > 0 ? 'Resume' : 'Start Lecture'}</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
@@ -331,6 +352,14 @@ export default function Dashboard() {
                 0
               );
 
+              const courseIdStr = String(course._id);
+              const completedCount = completedCounts[courseIdStr] !== undefined
+                ? completedCounts[courseIdStr]
+                : (course.completed_lessons || 0);
+              const progressPercentage = totalLessons > 0
+                ? Math.round((completedCount / totalLessons) * 100)
+                : 0;
+
               return (
                 <div
                   key={course._id}
@@ -387,13 +416,13 @@ export default function Dashboard() {
                       <div className="flex justify-between items-center text-[10px] sm:text-[11px] font-semibold">
                         <span className="text-slate-600 dark:text-slate-400">Progress</span>
                         <span className="text-blue-600 dark:text-blue-400 font-bold">
-                          {course.completed_lessons || 0} / {totalLessons} ({course.progress_percentage || 0}%)
+                          {completedCount} / {totalLessons} ({progressPercentage}%)
                         </span>
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700/60 h-1.5 rounded-full overflow-hidden">
                         <div 
                           className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
-                          style={{ width: `${Math.min(100, course.progress_percentage || 0)}%` }}
+                          style={{ width: `${Math.min(100, progressPercentage)}%` }}
                         />
                       </div>
                     </div>

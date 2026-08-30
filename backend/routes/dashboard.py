@@ -11,7 +11,7 @@ router = APIRouter()
 
 # High-speed in-memory cache for dashboard
 _dashboard_cache: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL = 15.0  # 15 seconds
+_CACHE_TTL = 30.0  # 30 seconds
 
 def invalidate_dashboard_cache(phone: str = None):
     if phone:
@@ -61,6 +61,137 @@ async def _calculate_streak_days(session, user_id: int) -> int:
     return streak
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LIVE STATS ENDPOINT (Fast < 20ms: streak, today's hours, accurate continue watching)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/live")
+async def get_dashboard_live(phone: str):
+    clean_phone = normalize_phone(phone)
+    async with get_db_session() as session:
+        user = await _get_user_by_phone(session, clean_phone)
+        if not user:
+            return {
+                "metrics": {"total_hours": 0, "hours_today": 0, "streak_days": 0},
+                "continue_watching": None,
+                "completed_counts": {},
+                "bookmarks_count": 0,
+            }
+
+        # 1. Study Metrics
+        total_res = await session.execute(
+            select(func.sum(StudyLog.seconds_studied)).filter_by(user_id=user.id)
+        )
+        total_seconds = total_res.scalar() or 0
+
+        today_res = await session.execute(
+            select(func.sum(StudyLog.seconds_studied)).filter_by(
+                user_id=user.id, date=func.current_date()
+            )
+        )
+        today_seconds = today_res.scalar() or 0
+
+        streak_days = await _calculate_streak_days(session, user.id)
+        metrics = {
+            "total_hours": round(total_seconds / 3600, 1),
+            "hours_today": round(today_seconds / 3600, 1),
+            "streak_days": streak_days,
+        }
+
+        # 2. Continue Watching (Accurately resolves the last played video or next lecture)
+        cw_result = await session.execute(
+            select(Progress)
+            .filter_by(user_id=user.id)
+            .order_by(Progress.last_watched_at.desc())
+            .limit(1)
+        )
+        cw_progress = cw_result.scalars().first()
+
+        continue_watching = None
+        if cw_progress:
+            course_title = "Course"
+            module_title = "Module"
+            lesson_title = f"Lecture #{cw_progress.lesson_id}"
+            is_completed = cw_progress.is_completed
+            target_lesson_id = cw_progress.lesson_id
+            target_progress_sec = cw_progress.progress_seconds
+            target_duration_sec = cw_progress.duration_seconds
+
+            # Look up course metadata for titles
+            course_row = None
+            try:
+                c_res = await session.execute(select(Course).filter_by(id=int(cw_progress.course_id)))
+                course_row = c_res.scalars().first()
+            except Exception:
+                pass
+
+            if course_row and course_row.data:
+                try:
+                    cdata = json.loads(course_row.data)
+                    course_title = cdata.get("title", course_title)
+                    found_mod = None
+                    found_les_idx = -1
+
+                    for mod in cdata.get("modules", []):
+                        lessons = mod.get("lessons", [])
+                        for idx, les in enumerate(lessons):
+                            if les.get("id") == cw_progress.lesson_id:
+                                found_mod = mod
+                                found_les_idx = idx
+                                module_title = mod.get("title", "Module")
+                                lesson_title = les.get("file_name") or les.get("text") or lesson_title
+                                break
+                        if found_mod:
+                            break
+
+                    # If the watched lesson was completed, suggest the next lesson in the module
+                    if is_completed and found_mod:
+                        lessons = found_mod.get("lessons", [])
+                        if found_les_idx + 1 < len(lessons):
+                            next_les = lessons[found_les_idx + 1]
+                            target_lesson_id = next_les.get("id")
+                            lesson_title = next_les.get("file_name") or next_les.get("text") or f"Lecture #{target_lesson_id}"
+                            target_progress_sec = 0
+                            target_duration_sec = next_les.get("duration", 0)
+                            is_completed = False
+                except Exception as e:
+                    print(f"[dashboard_live] Metadata error: {e}")
+
+            continue_watching = {
+                "course_id": cw_progress.course_id,
+                "lesson_id": target_lesson_id,
+                "progress_seconds": target_progress_sec,
+                "duration_seconds": target_duration_sec,
+                "is_completed": is_completed,
+                "course_title": course_title,
+                "module_title": module_title,
+                "lesson_title": lesson_title,
+            }
+
+        # 3. Completed Lessons Count Grouped by Course
+        prog_res = await session.execute(
+            select(Progress.course_id, func.count(Progress.id))
+            .filter_by(user_id=user.id, is_completed=True)
+            .group_by(Progress.course_id)
+        )
+        completed_counts = {str(row[0]): row[1] for row in prog_res.all()}
+
+        # 4. Bookmarks count
+        bm_result = await session.execute(
+            select(func.count(Bookmark.id)).filter_by(user_id=user.id)
+        )
+        bookmarks_count = bm_result.scalar() or 0
+
+        return {
+            "metrics": metrics,
+            "continue_watching": continue_watching,
+            "completed_counts": completed_counts,
+            "bookmarks_count": bookmarks_count,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPLETE DASHBOARD ENDPOINT (Courses catalog + full structure)
+# ─────────────────────────────────────────────────────────────────────────────
 @router.get("/")
 async def get_dashboard(phone: str, req: Request = None):
     clean_phone = normalize_phone(phone)
@@ -70,7 +201,7 @@ async def get_dashboard(phone: str, req: Request = None):
     if req:
         no_cache = "no-cache" in req.headers.get("Cache-Control", "") or req.query_params.get("_t") is not None
 
-    # Check in-memory cache first for instant sub-millisecond return
+    # Check in-memory cache first for instant return
     now = time.time()
     if not no_cache and clean_phone in _dashboard_cache:
         cached_time, cached_data = _dashboard_cache[clean_phone]
@@ -141,19 +272,11 @@ async def get_dashboard(phone: str, req: Request = None):
         # 3. Continue Watching
         cw_result = await session.execute(
             select(Progress)
-            .filter_by(user_id=user.id, is_completed=False)
+            .filter_by(user_id=user.id)
             .order_by(Progress.last_watched_at.desc())
             .limit(1)
         )
         cw_progress = cw_result.scalars().first()
-        if not cw_progress:
-            cw_result = await session.execute(
-                select(Progress)
-                .filter_by(user_id=user.id)
-                .order_by(Progress.last_watched_at.desc())
-                .limit(1)
-            )
-            cw_progress = cw_result.scalars().first()
 
         continue_watching = None
         if cw_progress:
@@ -161,20 +284,42 @@ async def get_dashboard(phone: str, req: Request = None):
             course_title = matched_course.get("title") if matched_course else "Course"
             module_title = "Module"
             lesson_title = f"Lecture #{cw_progress.lesson_id}"
+            is_completed = cw_progress.is_completed
+            target_lesson_id = cw_progress.lesson_id
+            target_progress_sec = cw_progress.progress_seconds
+            target_duration_sec = cw_progress.duration_seconds
             
             if matched_course:
+                found_mod = None
+                found_les_idx = -1
                 for mod in matched_course.get("modules", []):
-                    for les in mod.get("lessons", []):
+                    lessons = mod.get("lessons", [])
+                    for idx, les in enumerate(lessons):
                         if les.get("id") == cw_progress.lesson_id:
+                            found_mod = mod
+                            found_les_idx = idx
                             module_title = mod.get("title", "Module")
                             lesson_title = les.get("file_name") or les.get("text") or lesson_title
                             break
+                    if found_mod:
+                        break
+
+                if is_completed and found_mod:
+                    lessons = found_mod.get("lessons", [])
+                    if found_les_idx + 1 < len(lessons):
+                        next_les = lessons[found_les_idx + 1]
+                        target_lesson_id = next_les.get("id")
+                        lesson_title = next_les.get("file_name") or next_les.get("text") or f"Lecture #{target_lesson_id}"
+                        target_progress_sec = 0
+                        target_duration_sec = next_les.get("duration", 0)
+                        is_completed = False
 
             continue_watching = {
                 "course_id": cw_progress.course_id,
-                "lesson_id": cw_progress.lesson_id,
-                "progress_seconds": cw_progress.progress_seconds,
-                "duration_seconds": cw_progress.duration_seconds,
+                "lesson_id": target_lesson_id,
+                "progress_seconds": target_progress_sec,
+                "duration_seconds": target_duration_sec,
+                "is_completed": is_completed,
                 "course_title": course_title,
                 "module_title": module_title,
                 "lesson_title": lesson_title,
