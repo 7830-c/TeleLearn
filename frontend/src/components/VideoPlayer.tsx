@@ -155,6 +155,7 @@ export default function VideoPlayer() {
       setBuffered(0);
       isSeeking.current = false;
       wasPlayingBeforeSeek.current = false;
+      autoPlayRef.current = true;
       prevLessonIdRef.current = lessonId;
 
       // Scroll view to top so user immediately sees the new video
@@ -196,6 +197,7 @@ export default function VideoPlayer() {
 
   const handleCanPlay = useCallback(() => {
     setIsBuffering(false);
+    setVideoError(null);
     const v = videoRef.current;
     if (v) {
       if (playbackSpeed !== 1) {
@@ -215,9 +217,16 @@ export default function VideoPlayer() {
       } else {
         restoreSavedProgress();
       }
-      if (autoPlayRef.current) {
-        v.play().catch(() => { });
-        setIsPlaying(true);
+      if (autoPlayRef.current || !v.paused) {
+        const p = v.play();
+        if (p !== undefined) {
+          p.then(() => {
+            setIsPlaying(true);
+            setVideoError(null);
+          }).catch((err) => {
+            console.log('Autoplay deferred by browser policy:', err);
+          });
+        }
       }
       if (isSeeking.current && wasPlayingBeforeSeek.current) {
         v.play().catch(() => { });
@@ -310,7 +319,11 @@ export default function VideoPlayer() {
     }, 2000);
   }, [isPlaying]);
 
-  const handlePlay = () => { setIsPlaying(true); setIsBuffering(false); };
+  const handlePlay = () => { 
+    setIsPlaying(true); 
+    setIsBuffering(false); 
+    setVideoError(null); 
+  };
   const handlePause = () => {
     if (isSeeking.current) return;
     setIsPlaying(false);
@@ -323,6 +336,7 @@ export default function VideoPlayer() {
   const handlePlaying = () => {
     setIsBuffering(false);
     setIsPlaying(true);
+    setVideoError(null);
     if (isSeeking.current) {
       isSeeking.current = false;
       wasPlayingBeforeSeek.current = false;
@@ -340,6 +354,10 @@ export default function VideoPlayer() {
   const handleTimeUpdate = () => {
     const v = videoRef.current;
     if (!v) return;
+    if (v.currentTime > 0) {
+      setVideoError(null);
+      setIsBuffering(false);
+    }
     setCurrentTime(v.currentTime);
     if (v.buffered.length > 0) {
       let maxBuffered = 0;
@@ -357,6 +375,9 @@ export default function VideoPlayer() {
     const v = videoRef.current;
     if (v) {
       setDuration(v.duration);
+      if (v.duration > 0) {
+        setVideoError(null);
+      }
       if (pendingSeekPositionRef.current !== null) {
         const target = pendingSeekPositionRef.current;
         pendingSeekPositionRef.current = null;
@@ -376,6 +397,13 @@ export default function VideoPlayer() {
   const posterUrl = course ? `${API_BASE}/courses/thumbnail/${encodeURIComponent(phone)}/${course.channel_id}/${lessonId}` : '';
 
   const handleVideoError = useCallback(async (e: any) => {
+    const v = videoRef.current;
+    // If the video is actually playing, has duration, or is progressing, dismiss false error events!
+    if (v && (!v.paused || v.currentTime > 0 || (v.duration && v.duration > 0))) {
+      setVideoError(null);
+      return;
+    }
+
     console.error('Video error event:', e);
     setIsBuffering(false);
     setIsPlaying(false);
@@ -392,32 +420,27 @@ export default function VideoPlayer() {
           setVideoError(data?.detail || 'Unable to stream video chunks from Telegram.');
           return;
         }
-      } catch {}
-    }
-
-    const err = videoRef.current?.error;
-    let msg = 'Failed to load video stream from Telegram.';
-    if (err?.code === 4) {
-      msg = 'The browser could not decode this video container/format (e.g. MKV). Please download the video for offline playback below.';
-    } else if (err?.code === 2) {
-      msg = 'Network connection issue while downloading stream chunks.';
-    }
-    setVideoError(msg);
-  }, [streamUrl]);
-
-  // Watchdog: If video is stuck in initial buffering for > 8s, verify stream health
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    if (isBuffering && !isPlaying && !videoError && course && lessonId) {
-      timer = setTimeout(() => {
-        const v = videoRef.current;
-        if (v && v.currentTime === 0 && !v.duration) {
-          handleVideoError({ type: 'buffering_timeout' });
+        // If stream request is successful (HTTP 200/206), backend is working normally!
+        if (res.ok) {
+          return;
         }
-      }, 8500);
+      } catch {
+        setVideoError('Network connection issue while downloading stream chunks.');
+        return;
+      }
     }
-    return () => clearTimeout(timer);
-  }, [isBuffering, isPlaying, videoError, course, lessonId, handleVideoError]);
+
+    const err = v?.error;
+    if (err) {
+      let msg = 'Failed to load video stream from Telegram.';
+      if (err.code === 4) {
+        msg = 'The browser could not decode this video container/format (e.g. MKV). Please download the video for offline playback below.';
+      } else if (err.code === 2) {
+        msg = 'Network connection issue while downloading stream chunks.';
+      }
+      setVideoError(msg);
+    }
+  }, [streamUrl]);
 
   const handleSeeking = () => {
     isSeeking.current = true;
@@ -981,6 +1004,7 @@ export default function VideoPlayer() {
             <video
               key={lessonId}
               ref={videoRef}
+              autoPlay
               playsInline
               preload="auto"
               poster={posterUrl}
